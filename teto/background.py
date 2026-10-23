@@ -142,6 +142,10 @@ BROWSER_SPECS: dict[str, tuple[str, dict]] = {
                        _obj({**_TAB, "ref": {"type": "integer"}, "option": {"type": "string"}}, ["ref", "option"])),
     "browser_press": ("Press a key or combination in a tab, e.g. 'Return', 'Escape', 'ctrl+a', 'Page_Down'.",
                       _obj({**_TAB, "keys": {"type": "string"}}, ["keys"])),
+    "browser_write": ("Type text into whatever is currently focused in the page - use for editors that aren't a "
+                      "normal form field, like a Google Doc, Google Slides or a rich-text editor. Click into the "
+                      "editor first, then call this. Newlines become real Enter presses.",
+                      _obj({**_TAB, "text": {"type": "string"}}, ["text"])),
     "browser_scroll": ("Scroll a tab up or down by screens.",
                        _obj({**_TAB, "direction": {"type": "string", "enum": ["up", "down"]},
                              "amount": {"type": "number", "description": "Screens to scroll (default 1)."}},
@@ -451,7 +455,39 @@ class BackgroundBrowser:
         except Exception as e:
             raise ActionError(f"Couldn't load {url}: {str(e).splitlines()[0]}")
         self._settle(page)
-        return f"Opened in background tab {tid}.\n" + self.snapshot(tid)
+        return f"Opened in background tab {tid}.\n" + self.snapshot(tid) + self._login_note(page)
+
+    _LOGIN_HOSTS = ("accounts.google.com", "login.microsoftonline.com", "login.live.com", "login.yahoo.com",
+                    "appleid.apple.com", "signin.aws", "auth0.com")
+
+    def _on_login_wall(self, page) -> bool:
+        try:
+            host = (page.url.split("/")[2] if "://" in page.url else "").lower()
+        except Exception:
+            host = ""
+        if any(h in host for h in self._LOGIN_HOSTS):
+            return True
+        try:
+            return bool(page.query_selector("input[type=password]")) and \
+                ("sign in" in (page.title() or "").lower() or "log in" in (page.title() or "").lower())
+        except Exception:
+            return False
+
+    def _login_note(self, page) -> str:
+        """If the page is a sign-in wall, pop the browser open so the user can log
+        in once (the profile is persistent, so it stays logged in afterwards)."""
+        if not self._on_login_wall(page):
+            return ""
+        shown = ""
+        if self.headless:
+            try:
+                self.show()
+                shown = " I've opened my browser window so you can sign in."
+            except Exception:
+                shown = " (open my browser with browser_show so the user can sign in.)"
+        return ("\n\n[SIGN-IN NEEDED] This site needs the user to sign in. Tell the user to sign in to their "
+                "account in the Teto browser window that is now open" + shown + " Once they say they're done, "
+                "call browser_snapshot again to continue - the login is remembered for next time.")
 
     def list_tabs(self) -> str:
         self._ensure()
@@ -565,6 +601,18 @@ class BackgroundBrowser:
         page.keyboard.press(to_playwright_combo(keys))
         self._settle(page)
         return f"Pressed {keys} in tab {tid}."
+
+    def write(self, text: str, tab: int | None = None) -> str:
+        """Type into the focused element. Uses real key events (keyboard.type), which
+        canvas editors like Google Docs require - they ignore programmatic text
+        insertion and only react to actual keydown/keypress events."""
+        tid, page = self._page(tab)
+        page.keyboard.type(text.replace("\r\n", "\n"), delay=0)   # \n becomes a real Enter
+        try:
+            page.wait_for_timeout(80)
+        except Exception:
+            pass
+        return f"Wrote {len(text)} characters into the focused editor in tab {tid}."
 
     def scroll(self, direction: str, amount: float = 1.0, tab: int | None = None) -> str:
         tid, page = self._page(tab)
@@ -831,6 +879,7 @@ class BackgroundTools:
                                                bool(a.get("submit", False)), tab, should_stop),
                 "browser_select": lambda: b.select(int(a["ref"]), str(a.get("option", "")), tab),
                 "browser_press": lambda: b.press(str(a.get("keys", "")), tab),
+                "browser_write": lambda: b.write(str(a.get("text", "")), tab),
                 "browser_scroll": lambda: b.scroll(str(a.get("direction", "down")), a.get("amount", 1), tab),
                 "browser_navigate": lambda: b.navigate(str(a.get("action", "reload")), tab),
                 "browser_close_tab": lambda: b.close_tab(int(a["tab"])),
@@ -888,6 +937,19 @@ def work_style_prompt(style: str, has_background: bool) -> str:
                 "they mention having open, etc.), use browser_use_my_browser to connect to their OWN running "
                 "Edge/Chrome and work in their real tab. This drives the page directly without touching their "
                 "mouse or focus, so they can keep doing something else (like playing a game) meanwhile.\n"
+                "- Accounts & logins: your browser keeps its own logins and remembers them between sessions. If a "
+                "page returns a [SIGN-IN NEEDED] note, your browser window has opened - tell the user to sign in "
+                "there once, wait for them, then re-snapshot and carry on. You only need this the first time per "
+                "account.\n"
+                "- Google Docs/Sheets/Slides & Gmail: to CREATE a new Google Doc open "
+                "'https://docs.google.com/document/create' (Sheets: '.../spreadsheets/create', Slides: "
+                "'.../presentation/create'); handle any [SIGN-IN NEEDED] first. A Google Doc is a canvas editor, so "
+                "to write in it: click into the document body, then use browser_write to type the content (do not "
+                "expect to read the document's text back from the page). The new doc autosaves; give the user its "
+                "URL when done.\n"
+                "- Seeing the page: browser_snapshot and browser_read give you the page as text (fast) and after "
+                "every action you already get a fresh snapshot - work from that. Only use browser_screenshot when "
+                "you truly need to SEE layout/graphics; it is slower.\n"
                 + desktop +
                 "- Files, settings and information: run_shell.\n"
                 "- The screenshot/mouse/keyboard tools take over the user's real input and will pause to ask the "

@@ -278,3 +278,31 @@ def test_open_in_own_browser_still_works_without_attach(bg):
     tools, url = bg
     out = tools.run("browser_open", {"url": url, "own_browser": True})
     assert "Teto Test Shop" in out and not tools._browser.attached
+
+
+@pytest.mark.skipif(not HAVE_BROWSER, reason="no Chromium available")
+def test_browser_write_types_into_focused_editor(bg, tmp_path):
+    tools, _ = bg
+    page = tmp_path / "editor.html"
+    page.write_text('<!doctype html><title>Editor</title>'
+                    '<div id="ed" contenteditable="true" style="height:200px;border:1px solid"></div>'
+                    '<script>document.getElementById("ed").focus()</script>')
+    tools.run("browser_open", {"url": page.as_uri()})
+    out = tools.run("browser_write", {"text": "Hello Teto\nsecond line"})
+    assert "Wrote" in out
+    text = tools.run("browser_read", {})
+    assert "Hello Teto" in text and "second line" in text
+
+
+@pytest.mark.skipif(not HAVE_BROWSER, reason="no Chromium available")
+def test_login_wall_detection_adds_sign_in_note(bg, tmp_path):
+    tools, _ = bg
+    page = tmp_path / "login.html"
+    page.write_text('<!doctype html><title>Sign in - Example</title><h1>Sign in</h1>'
+                    '<input type="password" placeholder="Password"><button>Next</button>')
+    out = tools.run("browser_open", {"url": page.as_uri()})
+    assert "[SIGN-IN NEEDED]" in out
+
+
+def test_browser_write_in_specs():
+    assert "browser_write" in background.available_specs()

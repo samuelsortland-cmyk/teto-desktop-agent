@@ -40,7 +40,7 @@ Sometimes you *want* Teto to take over, like playing a game for you. Right-click
 
 By default Teto **doesn't touch your mouse or keyboard**. While you do something else, she works in the background in three ways.
 
-**Her own browser.** Teto runs a hidden copy of Microsoft Edge (or Chrome) with **her own tabs**, completely separate from yours.
+**Her own browser.** Teto runs a copy of Microsoft Edge (or Chrome) with **her own tabs**, separate from yours. It keeps its own logins and remembers them between sessions, so **the first time** a task needs one of your accounts (Google, email, etc.) her Edge window pops open and asks you to sign in once; after that she stays signed in and works there in the background. For example, "write a Google Doc about X" opens a new doc in her Edge and types it in. She reads web pages as **text** and acts on them directly, which is much faster than taking screenshots.
 - She opens sites, reads them, clicks buttons, fills forms and types inside those tabs through the browser itself. Nothing appears on your screen, and your tabs and focus are never touched.
 - The browser has its own profile, so it remembers logins between sessions. If a site needs you to sign in once, she'll ask. **Settings → Show Teto's browser window** (or asking her "show me your browser") lets you log in or watch her work.
 
