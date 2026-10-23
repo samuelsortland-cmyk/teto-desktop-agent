@@ -60,6 +60,15 @@ Prefer the old behaviour? Choose **Settings → Sharing your PC → Foreground**
 - **On your PC:** after one `START-TETO.bat` run, double-click `build_exe.bat`. You get `dist\Teto-Windows.zip`; unzip it anywhere and double-click `Teto.exe`. Copy that zip to any PC; nothing else is needed there except signing in.
 - **On GitHub:** push this folder to a GitHub repository. The included workflow (`.github/workflows/build-windows.yml`) builds, tests and zips `Teto.exe` on Windows servers. Run it from the **Actions** tab, or push a tag like `v1.0`, and it attaches `Teto-Windows.zip` to a Release you can download or share.
 
+### Speed
+
+Teto's pace is set by how long the AI takes to decide each step (a quick request to Claude over the internet), not by anything local - the local work happens in milliseconds. **Settings -> Speed** trades that thinking time against thoroughness:
+
+- **Fast** (default): low thinking effort and smaller screenshots, so each step comes back quickly. Best for everyday tasks and games.
+- **Balanced** / **Max**: more careful (and slower) for harder tasks.
+
+Teto also works in as few steps as possible - doing several actions in one go, and reading web pages as text instead of images - so there's less back-and-forth. Eagle Eyes always runs at the fastest setting. It still can't be instant, because a cloud AI decides each action, but Fast makes every step as quick as it can be.
+
 ### Updating (no re-downloading)
 
 Teto updates herself and downloads **only the files that changed**, usually a few kilobytes. Python and Claude Code are never downloaded again; if an update needs a new component, only that piece is installed.

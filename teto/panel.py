@@ -25,6 +25,8 @@ OK = "#8fe3a1"
 MODELS = ["default", "opus", "sonnet", "haiku", "claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1"]
 WORK_STYLES = {"background": "Background - don't use my mouse/keyboard (recommended)",
                "foreground": "Foreground - Teto may use my mouse & keyboard"}
+SPEEDS = {"fast": "Fast - quickest, snappiest (recommended)", "balanced": "Balanced - a bit more careful",
+          "max": "Max - slowest but most thorough", "custom": "Custom (use Effort below)"}
 BRAINS = {"subscription": "Claude subscription (Pro/Max sign-in)", "api": "Anthropic API key (advanced)"}
 EFFORTS = ["low", "medium", "high", "xhigh", "max"]
 
@@ -391,9 +393,11 @@ class SettingsWindow:
         self.model = ttk.Combobox(w, values=MODELS, width=30)
         self.model.set(cfg.model)
         row("Model", self.model, 2)
+        self.speed = ttk.Combobox(w, values=list(SPEEDS.values()), state="readonly", width=30)
+        self.speed.set(SPEEDS.get(cfg.speed, SPEEDS["fast"]))
+        row("Speed", self.speed, 3)
         self.effort = ttk.Combobox(w, values=EFFORTS, state="readonly", width=30)
         self.effort.set(cfg.effort)
-        row("Effort", self.effort, 3)
         self.steps = tk.Spinbox(w, from_=5, to=500, width=8, **ent)
         self.steps.delete(0, "end"); self.steps.insert(0, str(cfg.max_steps))
         row("Max steps per task", self.steps, 4)
@@ -565,6 +569,7 @@ class SettingsWindow:
         cfg.api_key = self.key.get().strip()
         cfg.model = model
         cfg.effort = self.effort.get()
+        cfg.speed = next((k for k, v in SPEEDS.items() if v == self.speed.get()), "fast")
         cfg.max_steps = steps
         cfg.screenshot_max_long_edge = shot
         cfg.monitor = monitor

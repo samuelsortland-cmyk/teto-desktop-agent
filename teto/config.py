@@ -28,7 +28,8 @@ class Config:
     brain: str = "subscription"       # subscription (Claude Pro/Max sign-in) | api
     api_key: str = ""                 # only for brain == "api"; empty -> ANTHROPIC_API_KEY
     model: str = "default"            # default | opus | sonnet | haiku | a full model id
-    effort: str = "medium"            # low | medium | high | xhigh | max
+    effort: str = "medium"            # low | medium | high | xhigh | max (when speed == "custom")
+    speed: str = "fast"               # fast | balanced | max | custom - trades thinking time vs. depth
     max_steps: int = 80               # model turns per task before Teto stops
     monitor: int = 1                  # mss monitor index (1 = primary)
     screenshot_max_long_edge: int = 1568
@@ -81,6 +82,8 @@ class Config:
             self.model = "default"
         if self.effort not in ("low", "medium", "high", "xhigh", "max"):
             self.effort = "medium"
+        if self.speed not in ("fast", "balanced", "max", "custom"):
+            self.speed = "fast"
         self.max_steps = max(1, min(int(self.max_steps or 80), 500))
         self.pet_scale = max(2, min(int(self.pet_scale or 6), 10))
         self.screenshot_max_long_edge = max(640, min(int(self.screenshot_max_long_edge or 1568), 2560))
@@ -90,6 +93,20 @@ class Config:
         self.update_branch = str(self.update_branch or "main").strip() or "main"
         if not isinstance(self.routines, list):
             self.routines = []
+
+    # Speed profile -> (thinking effort, screenshot long-edge px). Smaller, lower-effort
+    # requests come back from the model faster, which is what sets Teto's real pace.
+    SPEED_PROFILES = {"fast": ("low", 1024), "balanced": ("medium", 1280), "max": ("high", 1568)}
+
+    def effective_effort(self) -> str:
+        if self.speed == "custom":
+            return self.effort
+        return self.SPEED_PROFILES.get(self.speed, self.SPEED_PROFILES["fast"])[0]
+
+    def effective_screenshot_px(self) -> int:
+        if self.speed == "custom":
+            return self.screenshot_max_long_edge
+        return self.SPEED_PROFILES.get(self.speed, self.SPEED_PROFILES["fast"])[1]
 
     _lock = threading.Lock()
 

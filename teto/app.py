@@ -151,10 +151,11 @@ class App:
     API_MODEL_ALIASES = {"default": "claude-opus-5-5", "opus": "claude-opus-5-5",
                          "sonnet": "claude-sonnet-5-5", "haiku": "claude-haiku-5-5"}
 
-    def _agent_settings(self) -> AgentSettings:
+    def _agent_settings(self, eagle: bool = False) -> AgentSettings:
         c = self.config
         m = c.model.strip()
-        return AgentSettings(model=self.API_MODEL_ALIASES.get(m, m), effort=c.effort,
+        effort = "low" if eagle else c.effective_effort()      # Eagle Eyes is always snappy
+        return AgentSettings(model=self.API_MODEL_ALIASES.get(m, m), effort=effort,
                              max_steps=c.max_steps, confirm_shell=c.confirm_shell, api_key=c.api_key,
                              cli_model="" if m == "default" else m, work_style=c.work_style)
 
@@ -181,7 +182,7 @@ class App:
             before_input=self._wait_for_user_pause,
         )
         c = self.config
-        return Computer(hooks=hooks, max_long_edge=c.screenshot_max_long_edge, monitor_index=c.monitor,
+        return Computer(hooks=hooks, max_long_edge=c.effective_screenshot_px(), monitor_index=c.monitor,
                         confirm_risky_keys=c.confirm_risky_keys, human=c.human_typing,
                         wpm=c.typing_wpm, typos=c.typos)
 
