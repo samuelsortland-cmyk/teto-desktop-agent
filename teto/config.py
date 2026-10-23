@@ -20,6 +20,9 @@ def app_dir() -> str:
     return path
 
 
+DEFAULT_UPDATE_REPO = "samuelsortland-cmyk/teto-desktop-agent"
+
+
 @dataclass
 class Config:
     brain: str = "subscription"       # subscription (Claude Pro/Max sign-in) | api
@@ -43,7 +46,7 @@ class Config:
     human_typing: bool = True          # natural typing rhythm + mouse glide
     typing_wpm: int = 90
     typos: bool = True                 # occasional typo, instantly corrected
-    update_repo: str = ""              # GitHub "owner/repo" to update from
+    update_repo: str = DEFAULT_UPDATE_REPO   # GitHub "owner/repo" to update from
     update_branch: str = "main"
     auto_update: bool = True           # install updates by herself when idle
     routines: list = field(default_factory=list)  # [{"time":"09:00","task":"...","enabled":true,"last_run":""}]
@@ -83,7 +86,7 @@ class Config:
         self.screenshot_max_long_edge = max(640, min(int(self.screenshot_max_long_edge or 1568), 2560))
         self.monitor = max(1, int(self.monitor or 1))
         self.typing_wpm = max(20, min(int(self.typing_wpm or 90), 250))
-        self.update_repo = str(self.update_repo or "").strip()
+        self.update_repo = str(self.update_repo or "").strip() or DEFAULT_UPDATE_REPO
         self.update_branch = str(self.update_branch or "main").strip() or "main"
         if not isinstance(self.routines, list):
             self.routines = []

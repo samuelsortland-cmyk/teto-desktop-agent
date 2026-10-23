@@ -81,3 +81,9 @@ def test_reference_grid_is_well_formed():
             assert 0 <= x < sprites.GRID_W and 0 <= y < sprites.GRID_H and c in sprites.PALETTE
     # the bounce frame keeps the feet planted on the same row
     assert sprites.build_grid(sprites.Pose(bob=1)).px[-1] == list(sprites.BASE[-1])
+
+
+def test_update_repo_defaults_even_for_old_configs(tmp_path, monkeypatch):
+    monkeypatch.setattr(config_mod, "app_dir", lambda: str(tmp_path))
+    (tmp_path / "config.json").write_text(json.dumps({"update_repo": ""}))   # saved by an older Teto
+    assert config_mod.Config.load().update_repo == config_mod.DEFAULT_UPDATE_REPO
