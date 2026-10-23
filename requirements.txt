@@ -1,0 +1,8 @@
+claude-agent-sdk>=0.2.170
+anthropic>=2.1.0
+mss>=9.0
+pillow>=10.0
+pyautogui>=0.9.54
+pynput>=1.7.6
+playwright>=1.48
+uiautomation>=2.0.20; sys_platform == "win32"

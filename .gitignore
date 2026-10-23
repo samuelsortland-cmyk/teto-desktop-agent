@@ -1,0 +1,11 @@
+*.pyc
+*.spec
+*.zip
+.pytest_cache/
+.venv/
+Teto.lnk
+__pycache__/
+assets/build_manifest.json
+build/
+desktop.ini
+dist/
