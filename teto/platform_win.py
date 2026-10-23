@@ -8,6 +8,7 @@ the app never needs its own platform checks.
 from __future__ import annotations
 
 import ctypes
+import os
 import sys
 import time
 
@@ -551,3 +552,51 @@ def open_background(target: str) -> bool:
     shell32.ShellExecuteW.restype = ctypes.c_void_p
     r = shell32.ShellExecuteW(None, "open", target, None, None, 7)   # SW_SHOWMINNOACTIVE
     return (r or 0) > 32
+
+
+def _browser_exe() -> str:
+    """Path to the user's Edge (preferred) or Chrome."""
+    if not IS_WINDOWS:
+        return ""
+    candidates = [
+        os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+                     r"Microsoft\Edge\Application\msedge.exe"),
+        os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"),
+                     r"Microsoft\Edge\Application\msedge.exe"),
+        os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"),
+                     r"Google\Chrome\Application\chrome.exe"),
+        os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+                     r"Google\Chrome\Application\chrome.exe"),
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), r"Google\Chrome\Application\chrome.exe"),
+    ]
+    for c in candidates:
+        if c and os.path.isfile(c):
+            return c
+    return ""
+
+
+def launch_browser_with_debug(port: int, browser_path: str = "") -> bool:
+    """Relaunch the user's real browser with a DevTools debug port and their
+    normal session, so Teto can drive the tabs they already have open. Opens
+    minimized / without stealing focus. Uses an explicit user-data-dir pointed
+    at their default profile so remote debugging is permitted."""
+    import os as _os
+    import subprocess
+
+    exe = browser_path or _browser_exe()
+    if not exe:
+        return False
+    low = exe.lower()
+    if "edge" in low:
+        data = _os.path.join(_os.environ.get("LOCALAPPDATA", ""), r"Microsoft\Edge\User Data")
+    else:
+        data = _os.path.join(_os.environ.get("LOCALAPPDATA", ""), r"Google\Chrome\User Data")
+    args = [exe, f"--remote-debugging-port={int(port)}", "--remote-allow-origins=*", "--restore-last-session",
+            "--no-first-run", "--no-default-browser-check"]
+    if data and _os.path.isdir(data):
+        args.append(f"--user-data-dir={data}")
+    try:
+        subprocess.Popen(args, stdin=subprocess.DEVNULL, creationflags=0x08000000)
+        return True
+    except Exception:
+        return False

@@ -276,6 +276,7 @@ class CliAgent:
         self.bg_specs = background.specs() if background is not None else {}
         self.tool_specs = {**TOOL_SPECS, **self.bg_specs}
         self._fg_allowed = False
+        self.eagle = False
         self._loop = asyncio.new_event_loop()
         self._loop_thread = threading.Thread(target=self._loop.run_forever, name="teto-sdk", daemon=True)
         self._loop_thread.start()
@@ -531,7 +532,7 @@ class CliAgent:
 
     def _may_use_foreground(self) -> bool:
         """Background work style: ask once per task before touching the real mouse/keyboard."""
-        if self._style() != "background" or self._fg_allowed:
+        if self.eagle or self._style() != "background" or self._fg_allowed:
             return True
         self.ui.status("waiting")
         ok = self.ui.confirm("Can I use your mouse & keyboard?",

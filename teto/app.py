@@ -76,6 +76,7 @@ class App:
         self._restart_pending = False
         self._was_away = False
         self._battery_warned = 100
+        self._eagle_active = False
         self.background = self._make_background()
 
         self.font = pixel_font(self.root)
@@ -131,6 +132,8 @@ class App:
         m.add_checkbutton(label="Wander around", variable=self._wander_var, command=self._toggle_wander)
         m.add_command(label="Take a nap", command=lambda: self.pet.set_mood("sleeping"))
         m.add_command(label="Do a trick!", command=self._random_trick)
+        m.add_separator()
+        m.add_command(label="\U0001F441  Eagle Eyes (take my screen)...", command=self.eagle_eyes)
         m.add_command(label="Settings...", command=self.open_settings)
         m.add_command(label="Check for updates", command=lambda: self.check_updates(manual=True))
         m.add_separator()
@@ -285,8 +288,10 @@ class App:
     def _wait_for_user_pause(self, last_ours: float) -> None:
         """Background work style: before borrowing the real mouse/keyboard, wait
         (up to 20 s) until the user hasn't touched them for a moment. Teto's own
-        input ended at `last_ours`, so it isn't mistaken for the user's."""
-        if self.config.work_style != "background":
+        input ended at `last_ours`, so it isn't mistaken for the user's.
+
+        Skipped during Eagle Eyes, where the user wants Teto to take the screen."""
+        if self._eagle_active or self.config.work_style != "background":
             return
         end = time.monotonic() + 20
         while time.monotonic() < end and not self.agent.stop_event.is_set():
@@ -463,7 +468,7 @@ class App:
     def agent_busy(self) -> bool:
         return self._busy.is_set()
 
-    def submit_task(self, text: str, fresh: bool = False, from_suggestion: bool = False):
+    def submit_task(self, text: str, fresh: bool = False, from_suggestion: bool = False, eagle: bool = False):
         if from_suggestion:
             self.panel.log("user", text)
             self.panel.show()
@@ -472,15 +477,18 @@ class App:
             self.pet.set_mood("idle")
         if self.agent_busy():
             self.panel.log("system", "Queued - I'll do that right after the current task.")
-        self._tasks.put((text, fresh))
+        self._tasks.put((text, fresh, eagle))
         self.panel.set_queue(self._tasks.qsize() if self.agent_busy() else 0)
 
     def _worker_loop(self):
         while not self._quitting:
             try:
-                text, fresh = self._tasks.get(timeout=0.5)
+                text, fresh, eagle = self._tasks.get(timeout=0.5)
             except queue.Empty:
                 continue
+            engine = self.agent
+            engine.eagle = eagle           # Eagle Eyes: take the screen for this one task
+            self._eagle_active = eagle
             self._busy.set()
             self._events.put(("queue", self._tasks.qsize()))
             try:
@@ -493,12 +501,14 @@ class App:
                         self._events.put(("auth", False, st.get("error"), None))
                         continue
                     self._events.put(("auth", True, None, None))
-                self.agent.run_task(text, fresh=fresh)
+                engine.run_task(text, fresh=fresh)
             except Exception as e:
                 traceback.print_exc()
                 self.log("error", f"Something went wrong: {type(e).__name__}: {e}")
                 self.status("error")
             finally:
+                engine.eagle = False
+                self._eagle_active = False
                 self._busy.clear()
                 self._events.put(("queue", self._tasks.qsize()))
 
@@ -542,6 +552,46 @@ class App:
             self.menu.tk_popup(x, y)
         finally:
             self.menu.grab_release()
+
+    EAGLE_PREFIX = (
+        "[EAGLE EYES MODE] The user has handed you direct control of their screen to do this for them, right now, "
+        "while they watch. Work on the foreground screen with screenshots, the mouse and the keyboard - you do not "
+        "need to ask permission for mouse/keyboard this task; that is the whole point of Eagle Eyes. Approach it "
+        "like this:\n"
+        "1. First, if the task is a game or an app whose controls/mechanics you are not sure of, research it: open "
+        "your background browser (browser_open) and look up how it works - controls, keybinds, objectives, basic "
+        "strategy - then briefly tell the user the plan with 'say'.\n"
+        "2. Take a screenshot to see the current state. Bring the right window to the front if needed (open_target "
+        "or clicking it).\n"
+        "3. Then act in a tight loop: screenshot -> decide -> act (click/press keys) -> screenshot to check. React "
+        "to what is actually on screen; adapt as it changes. For games, keep going round the loop quickly.\n"
+        "4. The user can take back control any time (they can press Esc, Ctrl+Alt+Q, or move their mouse to a "
+        "screen corner), and you should stop if they say to. Keep 'say' updates short.\n"
+        "Never do anything that spends money, makes purchases, or changes account/security settings without "
+        "asking first, even in Eagle Eyes.\n\nThe task is: ")
+
+    def eagle_eyes(self):
+        """Ask what to do, then hand Teto the real screen to do it (foreground)."""
+        from tkinter import simpledialog
+
+        self.pet.poke()
+        if self.pet.mood == "sleeping":
+            self.pet.set_mood("idle")
+        prompt = simpledialog.askstring(
+            "Teto - Eagle Eyes \U0001F441",
+            "I'll take control of your screen and do this for you.\n"
+            "What should I do? (e.g. \"play the Roblox game Jujutsu Shenanigans and fight for me\",\n"
+            "or \"fill out this form that's on my screen\")",
+            parent=self.panel.win if self.panel.visible else self.root)
+        if not prompt or not prompt.strip():
+            return
+        self.panel.show()
+        self.panel.log("user", "\U0001F441 Eagle Eyes: " + prompt.strip())
+        if self.config.work_style == "background":
+            self.panel.log("system", "Eagle Eyes on - I'll control the screen directly for this. Press Esc, "
+                                     "Ctrl+Alt+Q, or flick your mouse to a corner to take back control.")
+        self.pet.say("Eagle Eyes! On it~ \U0001F441", 4)
+        self.submit_task(self.EAGLE_PREFIX + prompt.strip(), fresh=True, eagle=True)
 
     def _random_trick(self):
         tricks = [b.name for b in behaviors.LIBRARY if b.tag == "idle"]

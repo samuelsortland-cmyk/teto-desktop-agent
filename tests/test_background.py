@@ -223,7 +223,7 @@ def test_before_input_hook_only_for_real_input():
 
 
 def test_wait_for_user_pause(monkeypatch):
-    fake = types.SimpleNamespace(config=types.SimpleNamespace(work_style="background"),
+    fake = types.SimpleNamespace(config=types.SimpleNamespace(work_style="background"), _eagle_active=False,
                                  agent=types.SimpleNamespace(stop_event=types.SimpleNamespace(is_set=lambda: False)))
     clock = {"idle": 0.1}
     monkeypatch.setattr("teto.platform_win.user_idle_seconds", lambda: clock["idle"])
@@ -246,3 +246,35 @@ def test_wait_for_user_pause(monkeypatch):
     # foreground style never waits
     fake.config.work_style = "foreground"
     App._wait_for_user_pause(fake, last_ours=0.0)
+
+
+def test_eagle_eyes_takes_screen_without_asking():
+    a, ui, inputs, _ = _cli("background", [False])     # background style: a click would ask, user denies
+    res = a._handle_tool("click", {"x": 5, "y": 5})
+    assert res["is_error"] and len(ui.asked) == 1 and not inputs.calls
+    inputs.calls.clear(); a._fg_allowed = False; ui.asked.clear()
+    a.eagle = True
+    a._handle_tool("click", {"x": 7, "y": 8})
+    a._handle_tool("type_text", {"text": "go"})
+    assert ("click", 7, 8, "left", 1) in inputs.calls and ("type", "go") in inputs.calls
+    assert a.ui.asked == []                              # Eagle Eyes never prompts for input
+    a.shutdown()
+
+
+def test_wait_for_user_pause_skipped_in_eagle(monkeypatch):
+    import types
+    from teto.app import App
+    fake = types.SimpleNamespace(config=types.SimpleNamespace(work_style="background"), _eagle_active=True,
+                                 agent=types.SimpleNamespace(stop_event=types.SimpleNamespace(is_set=lambda: False)))
+    monkeypatch.setattr("teto.platform_win.user_idle_seconds", lambda: 0.0)   # user is actively playing
+    import time as _t
+    t0 = _t.monotonic()
+    App._wait_for_user_pause(fake, last_ours=0.0)       # must return at once, not wait for a pause
+    assert _t.monotonic() - t0 < 0.1
+
+
+@pytest.mark.skipif(not HAVE_BROWSER, reason="no Chromium available")
+def test_open_in_own_browser_still_works_without_attach(bg):
+    tools, url = bg
+    out = tools.run("browser_open", {"url": url, "own_browser": True})
+    assert "Teto Test Shop" in out and not tools._browser.attached

@@ -156,6 +156,28 @@ _POINT_R = {**_ERASE_R, (17, 18): "K", (18, 18): "K", (19, 18): "K", (20, 18): "
             (17, 20): "K", (18, 20): "K", (19, 20): "K", (20, 20): "K"}
 
 
+# Arm straight out to the side (shoulder height).
+_OUT_R = {**_ERASE_R, (16, 18): "g", (17, 18): "R", (18, 18): "R", (19, 18): "R", (20, 18): "S", (21, 18): "K",
+          (16, 17): "K", (17, 17): "K", (18, 17): "K", (19, 17): "K", (20, 17): "K",
+          (17, 19): "K", (18, 19): "K", (19, 19): "K", (20, 19): "K"}
+# Arm half-raised (diagonal down-out) - a relaxed, open gesture.
+_MID_R = {**_ERASE_R, (17, 19): "g", (18, 19): "R", (19, 20): "R", (20, 20): "S", (21, 21): "K",
+          (16, 19): "K", (17, 20): "K", (18, 20): "K", (19, 21): "K", (20, 21): "K"}
+# Hand on hip - a confident, lively stance.
+_HIP_R = {**_ERASE_R, (16, 19): "K", (16, 20): "G", (17, 20): "S", (18, 20): "K",
+          (16, 21): "G", (17, 21): "S", (18, 21): "K", (15, 20): "K", (15, 21): "K"}
+# Walk swing: right arm nudged forward (A) / back (B) by a pixel.
+_SWINGF_R = {**_ERASE_R, (17, 20): "G", (18, 20): "K", (18, 21): "G", (19, 21): "K",
+             (18, 22): "G", (19, 22): "S", (20, 22): "K", (19, 23): "K"}
+_SWINGB_R = {**_ERASE_R, (15, 20): "K", (15, 21): "G", (16, 21): "G", (15, 22): "G", (16, 22): "S",
+             (14, 22): "K", (15, 23): "K", (16, 23): "K", (17, 21): "K", (17, 22): "K"}
+# Cheer: both fists up high (livelier than the open up_both).
+_CHEER_R = {**_UP_R, (17, 13): "K", (18, 13): "K", (17, 14): "S", (18, 14): "S"}
+# Clap - hands meeting in front.
+_CLAP_R = {**_ERASE_R, (16, 19): "K", (17, 19): "g", (18, 19): "S", (19, 19): "K",
+           (17, 20): "K", (18, 20): "K"}
+
+
 def _mirror(d: dict) -> dict:
     return {(GRID_W - 1 - x, y): c for (x, y), c in d.items()}
 
@@ -168,6 +190,20 @@ ARMS = {
     "up_both": {**_UP_R, **_mirror(_UP_R)},
     "point_r": _POINT_R,
     "point_l": _mirror(_POINT_R),
+    "out_r": _OUT_R,
+    "out_l": _mirror(_OUT_R),
+    "out_both": {**_OUT_R, **_mirror(_OUT_R)},
+    "mid_r": _MID_R,
+    "mid_l": _mirror(_MID_R),
+    "mid_both": {**_MID_R, **_mirror(_MID_R)},
+    "hips": {**_HIP_R, **_mirror(_HIP_R)},
+    "swing_a": {**_SWINGF_R, **_mirror(_SWINGB_R)},   # right fwd, left back
+    "swing_b": {**_SWINGB_R, **_mirror(_SWINGF_R)},   # right back, left fwd
+    "cheer": {**_CHEER_R, **_mirror(_CHEER_R)},
+    "clap_a": {**_CLAP_R, **_mirror(_CLAP_R)},
+    "clap_b": {**_OUT_R, **_mirror(_OUT_R)},           # hands apart (pairs with clap_a)
+    "reach_r": _WAVE_R,                                # alias: reaching up
+    "wave_l": _mirror(_WAVE_R),
 }
 
 BODIES = ("", "bob", "squash", "stretch", "lean_l", "lean_r", "lie_l", "lie_r", "upside",

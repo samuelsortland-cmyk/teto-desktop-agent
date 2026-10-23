@@ -29,6 +29,30 @@ BRAINS = {"subscription": "Claude subscription (Pro/Max sign-in)", "api": "Anthr
 EFFORTS = ["low", "medium", "high", "xhigh", "max"]
 
 
+_FACE_CACHE: dict = {}
+
+
+def _teto_face_icon(root, size: int):
+    """A small Teto chibi face for the header (cached per size)."""
+    if size in _FACE_CACHE:
+        return _FACE_CACHE[size]
+    try:
+        from PIL import ImageTk
+
+        from . import sprites
+        img = sprites.render_pose(sprites.Pose(eyes="happy", mouth="smile"), 2)
+        head = img.crop((sprites.OFF_X * 2, sprites.OFF_Y * 2,
+                         (sprites.OFF_X + sprites.GRID_W) * 2, (sprites.OFF_Y + 16) * 2))
+        box = head.getbbox() or (0, 0, head.width, head.height)
+        head = head.crop(box)
+        k = max(1, size // head.height)
+        photo = ImageTk.PhotoImage(head.resize((head.width * k, head.height * k)))
+    except Exception:
+        photo = None
+    _FACE_CACHE[size] = photo
+    return photo
+
+
 def pixel_button(parent, text, command, color=RED, fg=TEXT, width=None):
     b = tk.Button(parent, text=text, command=command, bg=color, fg=fg, activebackground=PINK,
                   activeforeground=BG, relief="flat", bd=0, padx=10, pady=4, cursor="hand2",
@@ -59,14 +83,21 @@ class Panel:
         w._font_b = self.font_b
         w.bind("<Escape>", lambda e: self.app.stop_all())
 
-        # header
-        head = tk.Frame(w, bg=RED, height=40)
+        # header - a little Teto face, her name, and a status lamp
+        head = tk.Frame(w, bg=RED)
         head.pack(fill="x")
         head._font_b = self.font_b
-        tk.Label(head, text="♪ TETO AGENT", bg=RED, fg=TEXT, font=self.font_h, padx=10, pady=6).pack(side="left")
+        self._face = _teto_face_icon(root, max(28, int(34 * self.k)))
+        if self._face is not None:
+            tk.Label(head, image=self._face, bg=RED, bd=0).pack(side="left", padx=(8, 4), pady=4)
+        titles = tk.Frame(head, bg=RED)
+        titles.pack(side="left", pady=4)
+        tk.Label(titles, text="Teto", bg=RED, fg=TEXT, font=(fam, 13, "bold")).pack(anchor="w")
+        tk.Label(titles, text="your desktop buddy ♪", bg=RED, fg="#ffd6de",
+                 font=(fam, 8)).pack(anchor="w")
         self.status_lbl = tk.Label(head, text="● idle", bg=RED, fg=TEXT, font=self.font_b, padx=10)
         self.status_lbl.pack(side="right")
-        tk.Frame(w, bg=RED_D, height=4).pack(fill="x")
+        self._scallop(w)
 
         # toolbar
         bar = tk.Frame(w, bg=BG2, pady=6, padx=6)
@@ -152,6 +183,24 @@ class Panel:
         self.log("teto", "Hiii~ I'm Teto! Tell me what to do on your PC and I'll handle it. ♪")
         self.log("system", "Try: \"open Notepad and write a haiku about bread\"")
         self.entry.focus_set()
+
+    def _scallop(self, parent):
+        """A decorative pixel-scallop divider with little drills and notes."""
+        h = int(10 * self.k)
+        c = tk.Canvas(parent, height=h, bg=RED, highlightthickness=0, bd=0)
+        c.pack(fill="x")
+
+        def redraw(_e=None):
+            c.delete("all")
+            w = c.winfo_width() or self.pw
+            step = int(10 * self.k)
+            for x in range(0, w + step, step):          # scalloped bottom edge
+                c.create_oval(x - step // 2, -h, x + step // 2, h, fill=RED_D, outline="")
+            for i, x in enumerate(range(step, w, step * 4)):   # drill-pink dots + notes
+                col = PINK if i % 2 else "#ffd6de"
+                c.create_rectangle(x, h // 2 - 1, x + 2, h // 2 + 1, fill=col, outline="")
+        c.bind("<Configure>", redraw)
+        self.root.after(60, redraw)
 
     # ------------------------------------------------------------- window
     def _place_default(self):

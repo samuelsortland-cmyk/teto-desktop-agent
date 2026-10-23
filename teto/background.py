@@ -77,6 +77,22 @@ class Actor:
         self._q.put(None)
 
 
+def _which_browser() -> str:
+    import shutil
+
+    for name in ("google-chrome", "chromium", "chromium-browser", "microsoft-edge", "msedge"):
+        p = shutil.which(name)
+        if p:
+            return p
+    return os.environ.get("TETO_BROWSER_PATH", "")
+
+
+def _spawn(args: list[str]) -> None:
+    import subprocess
+
+    subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
+
+
 def _image_block(img: Image.Image, max_long_edge: int = 1568) -> tuple[dict, float]:
     s = fit_scale(img.width, img.height, max_long_edge)
     if s < 1:
@@ -94,10 +110,19 @@ def _obj(props: dict, required: list[str]) -> dict:
 
 _TAB = {"tab": {"type": "integer", "description": "Tab id (default: the current tab)."}}
 BROWSER_SPECS: dict[str, tuple[str, dict]] = {
-    "browser_open": ("Open a URL in Teto's own background browser (invisible to the user, separate tabs and "
-                     "logins from theirs). Returns the tab id and a numbered list of the page's clickable/typable "
+    "browser_use_my_browser": ("Connect to the user's OWN already-open Edge/Chrome and list their open tabs, so "
+                               "you can work in a tab they already have (keeping their logins and session). This "
+                               "drives the real page directly - it does NOT move their mouse or steal focus, so "
+                               "they can keep using another app. Use this when the task is about a site they're "
+                               "already signed in to, or they ask you to use their open tab. Teto may reopen the "
+                               "browser once to enable background control.", _obj({}, [])),
+    "browser_open": ("Open a URL in a tab. By default this uses Teto's own background browser (separate tabs/logins "
+                     "from the user's). If you've connected with browser_use_my_browser, pass own_browser:false to "
+                     "open it in the user's real browser instead. Returns the tab id and the page's interactive "
                      "elements.", _obj({"url": {"type": "string"},
-                                        "new_tab": {"type": "boolean", "description": "Default true."}}, ["url"])),
+                                        "new_tab": {"type": "boolean", "description": "Default true."},
+                                        "own_browser": {"type": "boolean",
+                                                        "description": "Default true (Teto's browser)."}}, ["url"])),
     "browser_tabs": ("List Teto's background browser tabs.", _obj({}, [])),
     "browser_snapshot": ("Get the current page's title, URL, a short text preview and its numbered interactive "
                          "elements [ref]. Use the refs with browser_click / browser_type / browser_select.",
@@ -223,11 +248,14 @@ class BackgroundBrowser:
     """Teto's own browser. Every method runs on the browser actor thread."""
 
     def __init__(self, profile_dir: str, headless: bool = True, browser_path: str = "",
-                 typing: Callable[[], tuple] = lambda: (True, 90, True)):
+                 typing: Callable[[], tuple] = lambda: (True, 90, True), debug_port: int = 9222):
         self.profile_dir = profile_dir
         self.headless = headless
         self.browser_path = browser_path or os.environ.get("TETO_BROWSER_PATH", "")
         self.typing = typing
+        self.debug_port = debug_port
+        self.attached = False          # True when driving the user's real running browser
+        self.browser = None            # the CDP Browser object when attached
         self.pw = None
         self.ctx = None
         self.tabs: dict[int, Any] = {}
@@ -280,6 +308,69 @@ class BackgroundBrowser:
         for p in list(self.ctx.pages):
             self._register(p)
 
+    # ------------------------------------------------ attach to the real browser
+    def _cdp_reachable(self) -> bool:
+        import urllib.request
+
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))   # never proxy localhost
+        try:
+            with opener.open(f"http://127.0.0.1:{self.debug_port}/json/version", timeout=1.5) as r:
+                return r.status == 200
+        except Exception:
+            return False
+
+    def attach(self, launch_if_needed: bool = True) -> str:
+        """Drive the user's ALREADY-OPEN Edge/Chrome through the DevTools protocol.
+
+        This operates the real tabs directly (reads, clicks, types in the page),
+        without moving the mouse or stealing focus - so the user can keep playing
+        a game while Teto works in one of their real tabs. Needs the browser to
+        expose a debug port; if it doesn't, Teto can relaunch it (reopening the
+        user's tabs) with the port enabled.
+        """
+        if self.attached and self.browser is not None:
+            return self.list_tabs()
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            raise ActionError("The background browser isn't installed yet. Run START-TETO.bat once to finish setup.")
+        launched = False
+        if not self._cdp_reachable():
+            if not launch_if_needed:
+                raise ActionError("Your browser isn't reachable for background control yet.")
+            launched = self._launch_real_with_debug()
+            for _ in range(30):
+                if self._cdp_reachable():
+                    break
+                time.sleep(0.5)
+            if not self._cdp_reachable():
+                raise ActionError("I couldn't connect to your Edge/Chrome. Make sure Edge is installed, or use my "
+                                  "own browser instead (I'll open the site in a background tab).")
+        if self.pw is None:
+            self.pw = sync_playwright().start()
+        try:
+            self.browser = self.pw.chromium.connect_over_cdp(f"http://127.0.0.1:{self.debug_port}", timeout=15000)
+        except Exception as e:
+            raise ActionError(f"Couldn't attach to your browser: {str(e).splitlines()[0]}")
+        self.attached = True
+        self.ctx = self.browser.contexts[0] if self.browser.contexts else self.browser.new_context()
+        self.ctx.on("page", self._register)
+        for p in list(self.ctx.pages):
+            self._register(p)
+        where = " (I reopened it with background control on)" if launched else ""
+        return f"Connected to your browser{where}. Your open tabs:\n" + self.list_tabs()
+
+    def _launch_real_with_debug(self) -> bool:
+        """Relaunch the user's Edge/Chrome with the debug port and their tabs."""
+        if not IS_WINDOWS:
+            exe = self.browser_path or _which_browser()
+            if not exe:
+                return False
+            _spawn([exe, f"--remote-debugging-port={self.debug_port}", "--remote-allow-origins=*",
+                    f"--user-data-dir={os.path.join(self.profile_dir, 'attach')}", "--no-first-run"])
+            return True
+        return platform_win.launch_browser_with_debug(self.debug_port, self.browser_path)
+
     def _register(self, page) -> int:
         for tid, p in self.tabs.items():
             if p is page:
@@ -298,7 +389,9 @@ class BackgroundBrowser:
 
     def close(self):
         try:
-            if self.ctx:
+            if self.attached and self.browser is not None:
+                self.browser.close()          # just disconnect; the user's browser keeps running
+            elif self.ctx:
                 self.ctx.close()
         except Exception:
             pass
@@ -307,7 +400,8 @@ class BackgroundBrowser:
                 self.pw.stop()
         except Exception:
             pass
-        self.ctx = self.pw = None
+        self.ctx = self.pw = self.browser = None
+        self.attached = False
         self.tabs.clear()
         self.current = None
 
@@ -338,7 +432,9 @@ class BackgroundBrowser:
                 self._register(p)
 
     # -------------------------------------------------------------- tools
-    def open(self, url: str, new_tab: bool = True) -> str:
+    def open(self, url: str, new_tab: bool = True, own_browser: bool = True) -> str:
+        if not own_browser and not self.attached:
+            self.attach()                       # open in the user's real browser
         self._ensure()
         url = url.strip()
         if "://" not in url and not url.startswith(("about:", "data:", "file:")):
@@ -733,7 +829,9 @@ class BackgroundTools:
             b, act = self._b()
             tab = a.get("tab")
             calls = {
-                "browser_open": lambda: b.open(str(a.get("url", "")), a.get("new_tab", True) is not False),
+                "browser_use_my_browser": b.attach,
+                "browser_open": lambda: b.open(str(a.get("url", "")), a.get("new_tab", True) is not False,
+                                               a.get("own_browser", True) is not False),
                 "browser_tabs": b.list_tabs,
                 "browser_snapshot": lambda: b.snapshot(tab),
                 "browser_read": lambda: b.read(tab),
@@ -797,6 +895,10 @@ def work_style_prompt(style: str, has_background: bool) -> str:
                 "- Web tasks: use your own background browser (browser_open, browser_snapshot, browser_click, "
                 "browser_type, browser_read...). It is invisible to the user and has its own tabs and logins. If a "
                 "site needs the user to log in, ask them and offer browser_show so they can log in once.\n"
+                "- If the task is about a site the user already has open or is signed in to (their email, a page "
+                "they mention having open, etc.), use browser_use_my_browser to connect to their OWN running "
+                "Edge/Chrome and work in their real tab. This drives the page directly without touching their "
+                "mouse or focus, so they can keep doing something else (like playing a game) meanwhile.\n"
                 + desktop +
                 "- Files, settings and information: run_shell.\n"
                 "- The screenshot/mouse/keyboard tools take over the user's real input. Use them only when nothing "

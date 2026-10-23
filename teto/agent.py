@@ -135,6 +135,7 @@ class Agent:
         self.background = background
         self.bg_specs = background.specs() if background is not None else {}
         self._fg_allowed = False
+        self.eagle = False
 
     # ------------------------------------------------------------ plumbing
     @property
@@ -214,7 +215,7 @@ class Agent:
                 for n, (d, s) in self.bg_specs.items()]
 
     def _may_use_foreground(self) -> bool:
-        if self.settings.work_style != "background" or self._fg_allowed:
+        if self.eagle or self.settings.work_style != "background" or self._fg_allowed:
             return True
         self.ui.status("waiting")
         ok = self.ui.confirm("Can I use your mouse & keyboard?",

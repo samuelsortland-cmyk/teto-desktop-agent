@@ -23,7 +23,8 @@ from . import behaviors, physics, platform_win, sprites
 from .sprites import FRAME_H, FRAME_W, GRID_H, GRID_W, OFF_X, OFF_Y, Pose
 
 TRANSPARENT = "#ff00fe"
-FPS_MS = 33
+FPS_MS = 16                  # ~60 fps for smooth motion
+PHYS_STEP = 1.0 / 120.0      # fixed physics sub-step, independent of frame timing
 SLEEP_AFTER_S = 300          # nap when you've been away this long
 LOCOMOTION = {"walk", "run", "tiptoe", "moonwalk", "dash", "chase_cursor", "to_window", "teleport"}
 
@@ -222,6 +223,9 @@ class Pet:
         self._key = None
         self._pos = None
         self._after_landing = None
+        self._phys_accum = 0.0
+        self._breathe = random.uniform(0, 6.28)
+        self._walk_phase = 0.0
 
         # input
         self._press = None
@@ -452,21 +456,41 @@ class Pet:
         if self.body.grounded:
             self.body.launch(vx, vy)
 
+    def _own_platforms(self) -> list[physics.Platform]:
+        """Teto can stand on her own chat window (and its top edge), read live
+        from Tk geometry so it works on every OS and while the window moves."""
+        out = []
+        panel = getattr(self.app, "panel", None)
+        if panel is not None and getattr(panel, "visible", False):
+            try:
+                w = panel.win
+                if w.winfo_viewable():
+                    x, y = w.winfo_rootx(), w.winfo_rooty()
+                    out.append(physics.Platform("panel", x + 4, y, x + w.winfo_width() - 4))
+            except tk.TclError:
+                pass
+        return out
+
     def _scan_platforms(self):
         if self.now < self._next_platform_scan:
             return
-        self._next_platform_scan = self.now + 0.3
+        self._next_platform_scan = self.now + 0.25
         if not getattr(self.app.config, "stand_on_windows", True):
-            self.platforms = []
+            self.platforms = self._own_platforms()
             return
         wins = platform_win.list_windows(exclude=getattr(self.app, "_our_hwnds", set()))
-        self.platforms = physics.visible_tops(wins, self.area)
+        self.platforms = physics.visible_tops(wins, self.area) + self._own_platforms()
 
     def _physics(self, dt: float):
         if self._dragging:
             return
         self._scan_platforms()
-        for ev in physics.step(self.body, dt, self.platforms, self.area):
+        self._phys_accum = min(self._phys_accum + dt, 0.1)      # don't spiral after a stall
+        events = []
+        while self._phys_accum >= PHYS_STEP:
+            events += physics.step(self.body, PHYS_STEP, self.platforms, self.area)
+            self._phys_accum -= PHYS_STEP
+        for ev in events:
             kind = ev[0]
             if kind == "land":
                 if ev[1] > 500:
@@ -513,6 +537,7 @@ class Pet:
         self.render_dx = 0.0
         self.render_dy = 0.0
         pose, props, fxs = self._decide(busy, dt)
+        pose = self._add_liveliness(pose, dt)
         self._emit_fx(fxs, dt)
 
         if self.hidden:
@@ -527,6 +552,23 @@ class Pet:
         self._draw_props(props if not self.hidden else ())
         self._update_particles(dt)
         self._place()
+
+    def _add_liveliness(self, pose: dict, dt: float) -> dict:
+        """Small constant motion so she never looks frozen: arms swing while
+        walking, and she 'breathes' with a gentle bob when standing still."""
+        b = self.body
+        if b.grounded and abs(b.walk_vx) > 2:
+            self._walk_phase += dt * (6.0 + abs(b.walk_vx) * 0.02)
+            if pose.get("arms", "down") == "down":
+                pose = {**pose, "arms": "swing_a" if int(self._walk_phase) % 2 else "swing_b"}
+            # a little stride bounce on top of any body pose
+            self.render_dy += -abs(math.sin(self._walk_phase * math.pi)) * 0.6 * self.scale
+        else:
+            self._breathe += dt * 2.2
+            if (b.grounded and not self._dragging and pose.get("body", "") in ("", "bob")
+                    and self.mood not in ("sleeping",)):
+                self.render_dy += math.sin(self._breathe) * 0.4 * self.scale
+        return pose
 
     # ------------------------------------------------------ what to show
     def _decide(self, busy: bool, dt: float) -> tuple[dict, list, list]:
@@ -588,7 +630,10 @@ class Pet:
                 self._start_behavior()
             else:
                 b.walk_vx = 0.0
-                pose = P(body="bob" if int(t * 1.6) % 2 else "")
+                # between behaviours she still shifts her weight and sways a little
+                phase = int(t * 1.1) % 6
+                arms = {4: "mid_r", 5: "mid_l"}.get(phase, "down")
+                pose = P(body="lean_l" if phase == 1 else "lean_r" if phase == 3 else "", arms=arms)
                 return self._idle_face(pose, now), [], []
         return self._run_behavior(now, dt)
 
@@ -624,7 +669,7 @@ class Pet:
         self.behavior = None
         self.body.walk_vx = 0.0
         self.hidden = False
-        self.rest_until = self.now + random.uniform(1.5, 5.0)
+        self.rest_until = self.now + random.uniform(0.6, 2.6)
 
     def _run_behavior(self, now: float, dt: float):
         beh = self.behavior

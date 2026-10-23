@@ -31,6 +31,13 @@ If something doesn't start, run `run_debug.bat` to see errors in a console. Logs
 
 ### She works in the background (you keep using your PC)
 
+**Teto can work in a tab you already have open.** If a task is about a site you're already signed in to or have open, Teto connects to your **own** running Edge/Chrome and works in your real tab, through the browser itself. She drives the page directly, so she never moves your mouse or steals focus - you can keep playing a game or doing other work while she gets it done. (If your browser wasn't started with background control, Teto reopens it once, restoring your tabs, to enable it.) Otherwise she uses her own hidden browser as before.
+
+#### 👁 Eagle Eyes - let Teto take the screen
+
+Sometimes you *want* Teto to take over, like playing a game for you. Right-click Teto and choose **👁 Eagle Eyes**, then tell her what to do (for example, "play the Roblox game Jujutsu Shenanigans and fight for me"). She first researches the activity - looking up controls, mechanics and strategy in her browser - then watches your screen and controls the mouse and keyboard in a fast loop to do it, adapting to what's happening on screen. You keep control the instant you want it back: press **Esc**, **Ctrl+Alt+Q**, or flick your mouse into a screen corner. She still asks before anything that spends money or changes account settings.
+
+
 By default Teto **doesn't touch your mouse or keyboard**. While you do something else, she works in the background in three ways.
 
 **Her own browser.** Teto runs a hidden copy of Microsoft Edge (or Chrome) with **her own tabs**, completely separate from yours.
@@ -196,7 +203,7 @@ Project layout:
 main.py              entry point (DPI awareness, single instance, logging)
 teto/app.py          wiring: windows, worker thread, queue, routines, hotkey
 teto/brain_cli.py    subscription brain: Claude Agent SDK + bundled Claude Code CLI
-teto/background.py   background work: Teto's own browser (Playwright) + UI Automation
+teto/background.py   background work: Teto's own browser + attach to your real browser (CDP) + UI Automation
 teto/agent.py        API-key brain: Messages API computer-use loop + client tools
 teto/behaviors.py    143 idle behaviours + the time/season-aware chooser
 teto/physics.py      gravity, flings, bounces, window platforms
@@ -208,7 +215,7 @@ teto/platform_win.py Win32: DPI, capture exclusion, SendInput, focus, work area
 teto/pet.py          pet window: physics, behaviour engine, reactions, speech bubble
 teto/panel.py        chat panel, approvals, settings/routines
 teto/sprites.py      the reference pixel-art Teto, expressions + effect sprites
-tests/               144 tests (fake screen/input/Claude/GitHub + a real background browser)
+tests/               148 tests (fake screen/input/Claude/GitHub + a real background browser)
 START-TETO.bat       one-click setup + launch (installs Python via winget if needed)
 build_exe.bat        builds the standalone Teto.exe zip
 .github/workflows/   builds Teto-Windows.zip on GitHub's Windows servers
