@@ -203,3 +203,26 @@ def test_every_mapped_key_is_a_valid_pyautogui_key():
     valid = set(pyautogui.KEYBOARD_KEYS)
     bad = sorted({v for v in _KEY_ALIASES.values() if v not in valid})
     assert not bad, bad
+
+
+def test_scancode_key_name_mapping_table():
+    # The scan-code keyboard must understand every key name parse_combo can emit.
+    from teto.computer import _KEY_ALIASES
+    from teto import platform_win
+    # On non-Windows name_to_vk returns None (no Win32), but the name tables must
+    # at least cover the common game keys so the Windows path can resolve them.
+    names = set(_KEY_ALIASES.values())
+    covered = set(platform_win._NAMED_VK) | {c for c in "abcdefghijklmnopqrstuvwxyz0123456789"}
+    missing = {n for n in names if len(n) > 1 and n not in platform_win._NAMED_VK
+               and not (n[0] == "f" and n[1:].isdigit()) and not n.startswith("num")}
+    # single-char names (letters, digits, punctuation) resolve via VkKeyScan at runtime
+    assert not missing, f"scan-code map missing game keys: {missing}"
+
+
+def test_fast_mode_disables_human_pacing():
+    inputs = FakeInputs()
+    # InputBackend isn't used here (FakeInputs), but Computer must forward fast cleanly
+    c = Computer(hooks=Hooks(), inputs=inputs, screen=FakeScreen())
+    inputs.fast = True
+    c.run("type", {"text": "gg"})          # must not raise with fast set
+    assert ("type", "gg") in inputs.calls

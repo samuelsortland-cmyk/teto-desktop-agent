@@ -293,15 +293,15 @@ class App:
         Skipped during Eagle Eyes, where the user wants Teto to take the screen."""
         if self._eagle_active or self.config.work_style != "background":
             return
-        end = time.monotonic() + 20
+        end = time.monotonic() + 6                     # brief courtesy pause, not a long stall
         while time.monotonic() < end and not self.agent.stop_event.is_set():
             idle = platform_win.user_idle_seconds()
             if idle == float("inf"):
                 return
             last_input_at = time.monotonic() - idle
-            if idle >= 1.2 or last_input_at <= last_ours + 0.25:
+            if idle >= 0.8 or last_input_at <= last_ours + 0.25:
                 return
-            time.sleep(0.2)
+            time.sleep(0.15)
 
     def _focus_is_ours(self) -> bool:
         """True if keyboard focus is on one of Teto's windows. Tries first to
@@ -555,20 +555,23 @@ class App:
 
     EAGLE_PREFIX = (
         "[EAGLE EYES MODE] The user has handed you direct control of their screen to do this for them, right now, "
-        "while they watch. Work on the foreground screen with screenshots, the mouse and the keyboard - you do not "
-        "need to ask permission for mouse/keyboard this task; that is the whole point of Eagle Eyes. Approach it "
-        "like this:\n"
-        "1. First, if the task is a game or an app whose controls/mechanics you are not sure of, research it: open "
-        "your background browser (browser_open) and look up how it works - controls, keybinds, objectives, basic "
-        "strategy - then briefly tell the user the plan with 'say'.\n"
-        "2. Take a screenshot to see the current state. Bring the right window to the front if needed (open_target "
-        "or clicking it).\n"
-        "3. Then act in a tight loop: screenshot -> decide -> act (click/press keys) -> screenshot to check. React "
-        "to what is actually on screen; adapt as it changes. For games, keep going round the loop quickly.\n"
-        "4. The user can take back control any time (they can press Esc, Ctrl+Alt+Q, or move their mouse to a "
-        "screen corner), and you should stop if they say to. Keep 'say' updates short.\n"
-        "Never do anything that spends money, makes purchases, or changes account/security settings without "
-        "asking first, even in Eagle Eyes.\n\nThe task is: ")
+        "while they watch. Work on the foreground screen with screenshots, the mouse and the keyboard - you do NOT "
+        "need to ask permission for mouse/keyboard this task; that is the whole point of Eagle Eyes. Work fast and "
+        "keep acting - do not sit idle or insert long waits. Approach it like this:\n"
+        "1. If it's a game or an app whose controls you aren't sure of, first research it: open your background "
+        "browser (browser_open) and look up the controls, keybinds, objective and basic strategy, then tell the "
+        "user the plan in one short 'say'.\n"
+        "2. CLICK the game/app window once to make sure it has keyboard focus before sending any keys - games "
+        "ignore keys that go to the wrong window. Take a screenshot to see the state.\n"
+        "3. Then act in a tight loop: screenshot -> decide -> act -> screenshot. For games: to MOVE or hold an "
+        "action use hold_key with a duration (e.g. hold 'w' for 1-2 seconds to walk, hold a mouse button to "
+        "attack); use quick key presses for one-off actions (jump, abilities). Your key presses are sent as real "
+        "hardware input, so they work in games. React to what's on screen and keep the loop going quickly; don't "
+        "pause between actions.\n"
+        "4. The user takes back control any time with Esc, Ctrl+Alt+Q, or by flicking the mouse into a screen "
+        "corner; stop if they say to. Keep 'say' updates very short.\n"
+        "Never spend money, make purchases, or change account/security settings without asking first.\n\n"
+        "The task is: ")
 
     def eagle_eyes(self):
         """Ask what to do, then hand Teto the real screen to do it (foreground)."""

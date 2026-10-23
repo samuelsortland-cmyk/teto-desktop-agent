@@ -544,6 +544,10 @@ class CliAgent:
 
     def run_task(self, task: str, fresh: bool = False) -> str:
         self._fg_allowed = False
+        try:
+            self.computer.inputs.fast = self.eagle        # Eagle Eyes: snappy, game-ready input
+        except Exception:
+            pass
         if fresh:
             self.new_conversation()
         self.stop_event.clear()

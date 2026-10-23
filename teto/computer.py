@@ -144,10 +144,14 @@ class InputBackend:
         import pyautogui  # imported lazily: needs a display
 
         pyautogui.FAILSAFE = False   # we implement a smarter corner-abort ourselves
-        pyautogui.PAUSE = 0.03
+        pyautogui.PAUSE = 0.0
         self.pg = pyautogui
         self.human, self.wpm, self.typos = human, wpm, typos
+        self.fast = False            # True in Eagle Eyes / games: direct, snappy input
         self.rng = random.Random()
+
+    def _human_now(self) -> bool:
+        return self.human and not self.fast
 
     def position(self) -> tuple[int, int]:
         p = self.pg.position()
@@ -164,33 +168,40 @@ class InputBackend:
             time.sleep(pause)
 
     def move(self, x, y, duration=0.0):
-        if self.human:
+        if self._human_now():
             self._glide(x, y)
         else:
-            self.pg.moveTo(x, y, duration=duration)
+            self.pg.moveTo(x, y, _pause=False)
 
     def click(self, x, y, button="left", clicks=1):
-        if self.human:
+        if self._human_now():
             self._glide(x, y)
             time.sleep(self.rng.uniform(0.03, 0.09))          # settle before pressing
             self.pg.click(x=x, y=y, button=button, clicks=clicks, interval=self.rng.uniform(0.07, 0.12))
         else:
-            self.pg.click(x=x, y=y, button=button, clicks=clicks, interval=0.06)
+            self.pg.moveTo(x, y, _pause=False)
+            self.pg.click(x=x, y=y, button=button, clicks=clicks, interval=0.02)
 
     def mouse_down(self, button="left"):
-        self.pg.mouseDown(button=button)
+        self.pg.mouseDown(button=button, _pause=False)
 
     def mouse_up(self, button="left"):
-        self.pg.mouseUp(button=button)
+        self.pg.mouseUp(button=button, _pause=False)
 
     def key_down(self, key):
+        if platform_win.IS_WINDOWS and platform_win.key_scancode(key, keyup=False):
+            return                                            # hardware scan code (works in games)
         self.pg.keyDown(key)
 
     def key_up(self, key):
+        if platform_win.IS_WINDOWS and platform_win.key_scancode(key, keyup=True):
+            return
         self.pg.keyUp(key)
 
     def hotkey(self, keys):
-        self.pg.hotkey(*keys, interval=0.02)
+        if platform_win.IS_WINDOWS and platform_win.press_scancodes(list(keys)):
+            return
+        self.pg.hotkey(*keys, interval=0.0)
 
     def scroll(self, dx_clicks: int, dy_clicks: int, x: int, y: int):
         if platform_win.IS_WINDOWS:
@@ -214,8 +225,8 @@ class InputBackend:
             raise ActionError("Non-ASCII typing is only supported on Windows")
 
     def type_text(self, text: str, should_stop):
-        if not self.human:
-            plan = [("char", ch, 0.004) for ch in text]
+        if not self._human_now():
+            plan = [("char", ch, 0.0) for ch in text]
         else:
             plan = humanize.plan_typing(text, self.rng, wpm=self.wpm, typos=self.typos)
         for step in plan:

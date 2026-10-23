@@ -236,7 +236,7 @@ def test_wait_for_user_pause(monkeypatch):
     monkeypatch.setattr("teto.platform_win.user_idle_seconds", idle)
     t0 = time.monotonic()
     App._wait_for_user_pause(fake, last_ours=0.0)
-    assert calls["n"] == 4 and time.monotonic() - t0 >= 0.5
+    assert calls["n"] == 4 and time.monotonic() - t0 >= 0.3
     # the "recent input" was Teto's own: no waiting
     calls["n"] = 0
     monkeypatch.setattr("teto.platform_win.user_idle_seconds", lambda: 0.1)

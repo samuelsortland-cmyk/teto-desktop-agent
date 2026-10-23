@@ -600,3 +600,73 @@ def launch_browser_with_debug(port: int, browser_path: str = "") -> bool:
         return True
     except Exception:
         return False
+
+
+# ------------------------------------------------- hardware scan-code keyboard
+# Games (Roblox, most DirectInput/raw-input titles) ignore virtual-key input
+# and only react to hardware SCAN CODES. SendInput with KEYEVENTF_SCANCODE is
+# what actually reaches them.
+KEYEVENTF_EXTENDEDKEY = 0x0001
+KEYEVENTF_KEYUP_F = 0x0002
+KEYEVENTF_SCANCODE = 0x0008
+
+# pyautogui-style key names (what computer.parse_combo returns) -> virtual-key code.
+_NAMED_VK = {
+    "enter": 0x0D, "esc": 0x1B, "backspace": 0x08, "tab": 0x09, "space": 0x20, "delete": 0x2E,
+    "insert": 0x2D, "home": 0x24, "end": 0x23, "pageup": 0x21, "pagedown": 0x22,
+    "up": 0x26, "down": 0x28, "left": 0x25, "right": 0x27,
+    "ctrl": 0x11, "ctrlleft": 0xA2, "ctrlright": 0xA3, "alt": 0x12, "altleft": 0xA4, "altright": 0xA5,
+    "shift": 0x10, "shiftleft": 0xA0, "shiftright": 0xA1, "win": 0x5B, "winleft": 0x5B, "winright": 0x5C,
+    "capslock": 0x14, "numlock": 0x90, "scrolllock": 0x91, "printscreen": 0x2C, "pause": 0x13, "apps": 0x5D,
+    "volumemute": 0xAD, "volumeup": 0xAF, "volumedown": 0xAE, "playpause": 0xB3,
+    "nexttrack": 0xB0, "prevtrack": 0xB1,
+}
+for _i in range(1, 25):
+    _NAMED_VK[f"f{_i}"] = 0x6F + _i
+for _i in range(10):
+    _NAMED_VK[f"num{_i}"] = 0x60 + _i
+# extended-key virtual codes (need the EXTENDEDKEY flag)
+_EXTENDED_VK = {0xA3, 0xA5, 0x2E, 0x2D, 0x24, 0x23, 0x21, 0x22, 0x26, 0x28, 0x25, 0x27, 0x5B, 0x5C, 0x5D,
+                0x90, 0x2C, 0xAD, 0xAF, 0xAE, 0xB3, 0xB0, 0xB1}
+
+
+def name_to_vk(name: str) -> int | None:
+    """Virtual-key code for a key name ('w', 'ctrl', 'up', 'space', ...)."""
+    if not IS_WINDOWS:
+        return None
+    low = name.lower()
+    if low in _NAMED_VK:
+        return _NAMED_VK[low]
+    if len(name) == 1:
+        res = user32.VkKeyScanW(ord(name))
+        if res != -1:
+            return res & 0xFF
+    return None
+
+
+def _scancode_input(vk: int, keyup: bool):
+    scan = user32.MapVirtualKeyW(vk, 0) & 0xFF            # MAPVK_VK_TO_VSC
+    flags = KEYEVENTF_SCANCODE | (KEYEVENTF_KEYUP_F if keyup else 0)
+    if vk in _EXTENDED_VK:
+        flags |= KEYEVENTF_EXTENDEDKEY
+    return _kbd(0, scan, flags)
+
+
+def key_scancode(name: str, keyup: bool) -> bool:
+    """Press or release one key as a hardware scan code. Returns False if the
+    name is unknown (caller can fall back)."""
+    vk = name_to_vk(name)
+    if vk is None:
+        return False
+    arr = (INPUT * 1)(_scancode_input(vk, keyup))
+    return user32.SendInput(1, arr, ctypes.sizeof(INPUT)) == 1
+
+
+def press_scancodes(names: list[str]) -> bool:
+    """Press a key or chord (modifiers first) via scan codes, release in reverse."""
+    vks = [name_to_vk(n) for n in names]
+    if any(v is None for v in vks):
+        return False
+    inputs = [_scancode_input(v, False) for v in vks] + [_scancode_input(v, True) for v in reversed(vks)]
+    arr = (INPUT * len(inputs))(*inputs)
+    return user32.SendInput(len(inputs), arr, ctypes.sizeof(INPUT)) == len(inputs)

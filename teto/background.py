@@ -416,15 +416,15 @@ class BackgroundBrowser:
         self.current = tab
         return tab, self.tabs[tab]
 
-    def _settle(self, page):
-        """Let the page finish loading. Uses Playwright's own wait (not time.sleep)
-        so browser events - like a click opening a new tab - get processed."""
+    def _settle(self, page, wait: int = 120):
+        """Let the page catch up. Kept short so background work stays snappy;
+        navigations get a longer load wait, in-page clicks only a brief tick."""
         try:
-            page.wait_for_load_state("domcontentloaded", timeout=8000)
+            page.wait_for_load_state("domcontentloaded", timeout=6000)
         except Exception:
             pass
         try:
-            page.wait_for_timeout(400)
+            page.wait_for_timeout(wait)
         except Exception:
             pass
         if self.ctx is not None:
@@ -530,30 +530,19 @@ class BackgroundBrowser:
 
     def type(self, ref: int, text: str, clear: bool = True, submit: bool = False, tab: int | None = None,
              should_stop=lambda: False) -> str:
+        # In a background tab the user doesn't watch the keystrokes, so type the
+        # text instantly (fill) - fast and reliable - rather than key-by-key.
         tid, page = self._page(tab)
         el = self._ref(page, ref)
         try:
-            el.scroll_into_view_if_needed(timeout=5000)
-            el.click(timeout=10000)
+            el.scroll_into_view_if_needed(timeout=4000)
             if clear:
-                el.fill("", timeout=5000)
+                el.fill(text, timeout=5000)
+            else:
+                el.click(timeout=6000)
+                page.keyboard.insert_text(text)
         except Exception as e:
             raise ActionError(f"Couldn't type into [{ref}]: {str(e).splitlines()[0]}")
-        human, wpm, typos = self.typing()
-        plan = (humanize.plan_typing(text, random.Random(), wpm=wpm, typos=typos) if human
-                else [("char", c, 0.0) for c in text])
-        for step in plan:
-            if should_stop():
-                raise UserAbort()
-            if step[-1]:
-                page.wait_for_timeout(step[-1] * 1000)
-            if step[0] == "char":
-                if step[1] == "\n":
-                    page.keyboard.press("Shift+Enter")
-                else:
-                    page.keyboard.insert_text(step[1]) if not step[1].isascii() else page.keyboard.type(step[1])
-            else:
-                page.keyboard.press("Backspace")
         if submit:
             page.keyboard.press("Enter")
             self._settle(page)
@@ -901,8 +890,11 @@ def work_style_prompt(style: str, has_background: bool) -> str:
                 "mouse or focus, so they can keep doing something else (like playing a game) meanwhile.\n"
                 + desktop +
                 "- Files, settings and information: run_shell.\n"
-                "- The screenshot/mouse/keyboard tools take over the user's real input. Use them only when nothing "
-                "above can do the job; the user will be asked to allow it first. Full-screen screenshots are fine.")
+                "- The screenshot/mouse/keyboard tools take over the user's real input and will pause to ask the "
+                "user first - avoid them in this mode; they may stall if the user is busy. Do the job with the "
+                "browser and window tools above and run_shell instead.\n"
+                "Work efficiently: act, then check; don't insert waits between steps. The user may be busy "
+                "(e.g. gaming), so just get it done quietly in the background.")
     return ("Background tools: besides the real mouse and keyboard, you have your own background browser "
             "(browser_*)" + (" and background desktop control (window_*)" if IS_WINDOWS else "") +
             ". Prefer them when they are more reliable, e.g. browser_snapshot + browser_click for web pages.")

@@ -35,7 +35,7 @@ If something doesn't start, run `run_debug.bat` to see errors in a console. Logs
 
 #### 👁 Eagle Eyes - let Teto take the screen
 
-Sometimes you *want* Teto to take over, like playing a game for you. Right-click Teto and choose **👁 Eagle Eyes**, then tell her what to do (for example, "play the Roblox game Jujutsu Shenanigans and fight for me"). She first researches the activity - looking up controls, mechanics and strategy in her browser - then watches your screen and controls the mouse and keyboard in a fast loop to do it, adapting to what's happening on screen. You keep control the instant you want it back: press **Esc**, **Ctrl+Alt+Q**, or flick your mouse into a screen corner. She still asks before anything that spends money or changes account settings.
+Sometimes you *want* Teto to take over, like playing a game for you. Right-click Teto and choose **👁 Eagle Eyes**, then tell her what to do (for example, "play the Roblox game Jujutsu Shenanigans and fight for me"). She first researches the activity - looking up controls, mechanics and strategy in her browser - then watches your screen and controls the mouse and keyboard in a fast loop to do it, adapting to what's happening on screen. Her key presses are sent as real hardware input (scan codes), so they work in games like Roblox that ignore ordinary simulated keys, and she holds movement keys down to walk/act. You keep control the instant you want it back: press **Esc**, **Ctrl+Alt+Q**, or flick your mouse into a screen corner. She still asks before anything that spends money or changes account settings.
 
 
 By default Teto **doesn't touch your mouse or keyboard**. While you do something else, she works in the background in three ways.
@@ -215,7 +215,7 @@ teto/platform_win.py Win32: DPI, capture exclusion, SendInput, focus, work area
 teto/pet.py          pet window: physics, behaviour engine, reactions, speech bubble
 teto/panel.py        chat panel, approvals, settings/routines
 teto/sprites.py      the reference pixel-art Teto, expressions + effect sprites
-tests/               148 tests (fake screen/input/Claude/GitHub + a real background browser)
+tests/               150 tests (fake screen/input/Claude/GitHub + a real background browser)
 START-TETO.bat       one-click setup + launch (installs Python via winget if needed)
 build_exe.bat        builds the standalone Teto.exe zip
 .github/workflows/   builds Teto-Windows.zip on GitHub's Windows servers

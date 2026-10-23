@@ -79,6 +79,7 @@ class _FakePG:
 def _backend(human=True, typos=True):
     b = object.__new__(InputBackend)
     b.pg, b.human, b.wpm, b.typos, b.rng = _FakePG(), human, 2500, typos, random.Random(7)
+    b.fast = False
     return b
 
 

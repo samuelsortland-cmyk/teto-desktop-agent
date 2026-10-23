@@ -176,6 +176,7 @@ class Agent:
         with self._lock:
             self._fg_allowed = False
             self.stop_event.clear()
+            self._set_fast(self.eagle)
             if fresh:
                 self.messages = []
             now = _dt.datetime.now().strftime("%A %Y-%m-%d %H:%M")
@@ -213,6 +214,12 @@ class Agent:
     def _bg_tools(self) -> list[dict]:
         return [{"name": n, "description": d, "input_schema": s, "eager_input_streaming": True}
                 for n, (d, s) in self.bg_specs.items()]
+
+    def _set_fast(self, fast: bool) -> None:
+        try:
+            self.computer.inputs.fast = fast        # Eagle Eyes: snappy, game-ready input
+        except Exception:
+            pass
 
     def _may_use_foreground(self) -> bool:
         if self.eagle or self.settings.work_style != "background" or self._fg_allowed:
