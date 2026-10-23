@@ -306,3 +306,20 @@ def test_login_wall_detection_adds_sign_in_note(bg, tmp_path):
 
 def test_browser_write_in_specs():
     assert "browser_write" in background.available_specs()
+
+
+def test_eagle_uses_fast_game_screenshot_size_and_restores():
+    from teto.agent import Agent
+    responses = [message([{"type": "text", "text": "done"}]), message([{"type": "text", "text": "done"}])]
+    ui = RecordingUI()
+    inputs, screen = FakeInputs(), FakeScreen(1920, 1080)
+    h = {}
+    comp = Computer(hooks=Hooks(), inputs=inputs, screen=screen, max_long_edge=1568)
+    a = Agent(ui, lambda: comp, AgentSettings(work_style="foreground"), client=FakeClient(responses))
+    assert comp.base_long_edge == 1568
+    a.eagle = True
+    a.run_task("play")
+    assert comp.max_long_edge == 1280 and inputs.fast is True   # game-ready vision + input
+    a.eagle = False
+    a.run_task("normal", fresh=True)
+    assert comp.max_long_edge == 1568 and inputs.fast is False  # restored for ordinary tasks

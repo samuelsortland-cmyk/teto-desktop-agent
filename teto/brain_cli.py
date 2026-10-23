@@ -548,7 +548,9 @@ class CliAgent:
     def run_task(self, task: str, fresh: bool = False) -> str:
         self._fg_allowed = False
         try:
-            self.computer.inputs.fast = self.eagle        # Eagle Eyes: snappy, game-ready input
+            c = self.computer
+            c.inputs.fast = self.eagle                    # Eagle Eyes: snappy, game-ready input
+            c.max_long_edge = 1280 if self.eagle else c.base_long_edge   # fast, clear game vision
         except Exception:
             pass
         if fresh:

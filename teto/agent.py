@@ -219,7 +219,11 @@ class Agent:
 
     def _set_fast(self, fast: bool) -> None:
         try:
-            self.computer.inputs.fast = fast        # Eagle Eyes: snappy, game-ready input
+            c = self.computer
+            c.inputs.fast = fast                    # Eagle Eyes: snappy, game-ready input
+            # Games have no text to read, so she sees by screenshot. Keep them modest
+            # for fast vision but detailed enough to make out the game.
+            c.max_long_edge = 1280 if fast else c.base_long_edge
         except Exception:
             pass
 

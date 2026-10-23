@@ -294,6 +294,7 @@ class Computer:
                  typos: bool = True):
         self.hooks = hooks or Hooks()
         self.max_long_edge = max_long_edge
+        self.base_long_edge = max_long_edge        # restored after Eagle Eyes
         self.screen = screen or ScreenBackend(monitor_index)
         self.inputs = inputs or InputBackend(human=human, wpm=wpm, typos=typos)
         self.confirm_risky_keys = confirm_risky_keys
