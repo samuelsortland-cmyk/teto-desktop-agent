@@ -22,7 +22,14 @@ jobs:
         run: python -m pip install -r requirements.txt pyinstaller pytest
 
       - name: Run tests
-        run: python -m pytest -q
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m pytest -q -rf --tb=line 2>&1 | tee pytest.log || {
+            # surface failures as annotations (readable without downloading logs)
+            grep -E "^(FAILED|ERROR)|Error|assert" pytest.log | head -20 | sed 's/^/::error::/'
+            exit 1
+          }
 
       - name: Record the baked-in code (for small self-updates later)
         run: python -c "from teto.updater import write_build_manifest; write_build_manifest('.', r'assets\build_manifest.json')"
