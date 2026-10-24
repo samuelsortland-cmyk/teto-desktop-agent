@@ -436,14 +436,20 @@ class _Pat:
 class _Ctl:
     """Tiny stand-in for a uiautomation Control."""
 
-    def __init__(self, kind, name="", children=(), patterns=None):
+    def __init__(self, kind, name="", children=(), patterns=None, offscreen=False):
         self.ControlTypeName, self.Name = kind, name
         self.children = list(children)
         self.patterns = patterns or {}
-        self.IsOffscreen, self.IsEnabled = False, True
+        self.IsOffscreen, self.IsEnabled = offscreen, True
+        self.parent = None
+        for c in self.children:
+            c.parent = self
 
     def GetChildren(self):
         return self.children
+
+    def GetParentControl(self):
+        return self.parent
 
     def GetPattern(self, pid):
         return self.patterns.get(pid)
@@ -454,7 +460,7 @@ def fake_edge(monkeypatch):
     import sys
     PID = types.SimpleNamespace(ValuePattern="value", TogglePattern="toggle", SelectionItemPattern="sel",
                                 TextPattern="text", InvokePattern="invoke", ExpandCollapsePattern="exp",
-                                LegacyIAccessiblePattern="legacy")
+                                LegacyIAccessiblePattern="legacy", ScrollItemPattern="scroll")
     state = {"title": "Essay - Google Docs", "selected": 0, "invoked": []}
     titles = ["Essay - Google Docs", "Roblox Wiki"]
 
@@ -472,8 +478,17 @@ def fake_edge(monkeypatch):
     address = _Ctl("EditControl", "Address and search bar",
                    patterns={"value": _Pat(Value="docs.google.com/document/d/abc/edit")})
     share = _Ctl("ButtonControl", "Share", patterns={"invoke": _Pat(Invoke=lambda: state["invoked"].append("Share"))})
-    doc = _Ctl("DocumentControl", "Essay", children=[share, _Ctl("TextControl", "My essay title")],
-               patterns={"text": _Pat(DocumentRange=_Pat(GetText=lambda n: "My essay title\nOnce upon a time"))})
+    # a quiz answer: plain text inside a clickable <div> (only the div has a default action)
+    answer = _Ctl("TextControl", "Critical of the peasant class")
+    option = _Ctl("GroupControl", "", children=[answer],
+                  patterns={"legacy": _Pat(DoDefaultAction=lambda: state["invoked"].append("answer"))})
+    nxt = _Ctl("ButtonControl", "Next", offscreen=True,
+               patterns={"invoke": _Pat(Invoke=lambda: state["invoked"].append("Next")),
+                         "scroll": _Pat(ScrollIntoView=lambda: state["invoked"].append("scrolled"))})
+    visible = [_Pat(GetText=lambda n: "Once upon a time"), _Pat(GetText=lambda n: "Q1. The author's view is...")]
+    doc = _Ctl("DocumentControl", "Essay", children=[share, _Ctl("TextControl", "My essay title"), option, nxt],
+               patterns={"text": _Pat(DocumentRange=_Pat(GetText=lambda n: "My essay title\nOnce upon a time"),
+                                      GetVisibleRanges=lambda: visible)})
     root = _Ctl("WindowControl", "Edge", children=[
         _Ctl("PaneControl", "", children=[_Ctl("TabControl", "", children=tabs), address]),
         _Ctl("PaneControl", "", children=[doc])])
@@ -484,6 +499,7 @@ def fake_edge(monkeypatch):
     pw = background.platform_win
     monkeypatch.setattr(pw, "list_windows", lambda exclude=(): [(11, 0, 0, 800, 600), (42, 0, 0, 1280, 900)])
     monkeypatch.setattr(pw, "window_process", lambda h: {11: "Code.exe", 42: "msedge.exe"}[h])
+    monkeypatch.setattr(pw, "minimized_windows", lambda exclude=(): [])
     monkeypatch.setattr(pw, "window_title", lambda h: state["title"] + " - Microsoft Edge")
     monkeypatch.setattr(background.BackgroundDesktop, "_check", lambda self, h: h)
     return state
@@ -494,13 +510,19 @@ def test_screen_tab_reads_the_users_visible_edge_tab(fake_edge):
     out = tools.run("browser_screen_tab", {})
     assert "window 42" in out and "URL: https://docs.google.com/document/d/abc/edit" in out   # skipped VS Code
     assert "* 1. Essay - Google Docs" in out and "  2. Roblox Wiki" in out
-    assert "Once upon a time" in out and '[1] Button "Share"' in out
+    assert "What's visible on the page:\nOnce upon a time\nQ1. The author's view is..." in out
+    assert '[1] Button "Share"' in out and '[4] Button "Next" (scrolled off)' in out
     assert "Address" not in out.split("Page elements")[1]          # browser frame isn't mixed into the page
-    assert tools.run("window_click", {"window": 42, "ref": 1}).startswith("Activated [1]")
+    res = tools.run("window_click", {"window": 42, "ref": 1})
+    assert res.startswith("Activated [1]") and "What's visible on the page" in res   # new state comes back
     assert fake_edge["invoked"] == ["Share"]                       # acted in the real tab, no mouse
+    fake_edge["invoked"].clear()
+    tools.run("window_click", {"window": 42, "ref": 3})           # the answer text -> its clickable div
+    tools.run("window_click", {"window": 42, "ref": 4})           # Next is below the fold -> scrolled to
+    assert fake_edge["invoked"] == ["answer", "scrolled", "Next"]
     out = tools.run("browser_screen_tab", {"switch_to": "roblox"})
-    assert fake_edge["selected"] == 1 and "Active tab: Roblox Wiki" in out
-    with pytest.raises(ActionError, match="No tab matching"):
+    assert fake_edge["selected"] == 1 and "Showing tab: Roblox Wiki" in out
+    with pytest.raises(ActionError, match="No open tab matching"):
         tools.run("browser_screen_tab", {"switch_to": "netflix"})
     tools.shutdown()
 

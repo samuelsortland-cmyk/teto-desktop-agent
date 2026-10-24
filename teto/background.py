@@ -184,12 +184,9 @@ def _obj(props: dict, required: list[str]) -> dict:
 
 _TAB = {"tab": {"type": "integer", "description": "Tab id (default: the current tab)."}}
 BROWSER_SPECS: dict[str, tuple[str, dict]] = {
-    "browser_use_my_browser": ("Connect to the user's OWN already-open Edge/Chrome and list their open tabs, so "
-                               "you can work in a tab they already have (keeping their logins and session). This "
-                               "drives the real page directly - it does NOT move their mouse or steal focus, so "
-                               "they can keep using another app. Use this when the task is about a site they're "
-                               "already signed in to, or they ask you to use their open tab. Teto may reopen the "
-                               "browser once to enable background control.", _obj({}, [])),
+    "browser_use_my_browser": ("List the tabs of your own background Edge (the signed-in copy you open new tabs "
+                               "in). For the user's real, already-open tabs use browser_screen_tab instead.",
+                               _obj({}, [])),
     "browser_open": ("Open a URL in a new background tab of the USER'S OWN signed-in Edge (their logins, Google "
                      "account, etc.) - it runs minimized and never touches their mouse, keyboard or focus. Pass "
                      "own_browser:true only for a throwaway task that must be kept apart from their accounts. "
@@ -261,19 +258,16 @@ WINDOW_SPECS: dict[str, tuple[str, dict]] = {
 
 
 SCREEN_TAB_SPECS: dict[str, tuple[str, dict]] = {
-    "browser_screen_tab": ("See the browser tab the USER IS LOOKING AT on their screen right now (their real Edge "
-                           "window): its title, URL, the other tabs in that window, the page text and its "
-                           "numbered elements. Use the refs with window_click / window_type (window = the id "
-                           "shown) to work in that very tab without moving their mouse. switch_to: optionally "
-                           "bring another tab of that window to the front first (part of its title, or its "
-                           "number from the tab list). Use this whenever the user says 'this page', 'this tab', "
-                           "'what I'm looking at', or the task is about what's on their screen.",
-                           _obj({"switch_to": {"type": "string"}}, [])),
-    "browser_take_screen_tab": ("Open the page the user is looking at (their on-screen Edge tab) in a background "
-                                "tab of your signed-in Edge, with full fast control (browser_* tools). Their "
-                                "accounts are signed in there too, so it's the same document/email/page - edits to "
-                                "online docs (Google Docs, Sheets, Office online...) show up live on their screen. "
-                                "Best for heavy work like writing in a Google Doc they have open.",
+    "browser_screen_tab": ("Work in the user's OWN, ALREADY-OPEN Edge tab - the one they're looking at, or "
+                           "any other tab they have open (pass switch_to with part of its title). Returns the "
+                           "tab's URL, their open tabs, the visible page text and the page's numbered elements. "
+                           "Then act IN THAT TAB with window_click / window_type (window = the id shown): no new "
+                           "tab, no mouse, it works even while they use another app. Each of those actions "
+                           "comes back with the page's new state. switch_to brings that tab to the front of its "
+                           "window.", _obj({"switch_to": {"type": "string"}}, [])),
+    "browser_take_screen_tab": ("Open a copy of the user's tab as a NEW tab in your own Edge. Only when the user "
+                                "asks for that, or when the work truly can't be done in their tab (e.g. writing "
+                                "long text into a Google Doc's canvas).",
                                 _obj({"switch_to": {"type": "string"}}, [])),
 }
 
@@ -890,6 +884,7 @@ class BackgroundDesktop:
         self.exclude = exclude
         self.elements: dict[int, dict[int, Any]] = {}
         self.shot_scale: dict[int, float] = {}
+        self.web_windows: set[int] = set()     # the user's browser windows we've read as web pages
 
     @staticmethod
     def init_thread():
@@ -930,7 +925,7 @@ class BackgroundDesktop:
               "TextControl", "MenuBarControl", "HeaderItemControl"}
 
     def _collect(self, root, max_depth: int = 14, max_refs: int = 300, seconds: float = 6.0,
-                 skip_root: bool = False):
+                 skip_root: bool = False, offscreen: bool = False):
         import uiautomation as auto
 
         refs: dict[int, Any] = {}
@@ -939,13 +934,14 @@ class BackgroundDesktop:
         visited = 0
         deadline = time.monotonic() + seconds
         while frontier and visited < 4000 and len(refs) < max_refs and time.monotonic() < deadline:
-            ctrl, depth = frontier.pop(0)
+            ctrl, depth = frontier.pop() if offscreen else frontier.pop(0)   # web: reading order
             visited += 1
             try:
                 kind = ctrl.ControlTypeName
                 name = (ctrl.Name or "").strip().replace("\n", " ")[:80]
-                if (kind in self.USEFUL and not (kind == "TextControl" and not name) and not ctrl.IsOffscreen
-                        and not (skip_root and depth == 0)):
+                hidden = ctrl.IsOffscreen
+                if (kind in self.USEFUL and not (kind == "TextControl" and not name)
+                        and (offscreen or not hidden) and not (skip_root and depth == 0)):
                     n = len(refs) + 1
                     refs[n] = ctrl
                     extra = ""
@@ -962,10 +958,11 @@ class BackgroundDesktop:
                             extra += " [x]" if tp.ToggleState == 1 else " [ ]"
                         except Exception:
                             pass
-                    off = "" if ctrl.IsEnabled else " (disabled)"
+                    off = ("" if ctrl.IsEnabled else " (disabled)") + (" (scrolled off)" if hidden else "")
                     lines.append(f"[{n}] {kind.replace('Control', '')} \"{name}\"{extra}{off}")
                 if depth < max_depth:
-                    frontier.extend((c, depth + 1) for c in ctrl.GetChildren())
+                    kids = [(c, depth + 1) for c in ctrl.GetChildren()]
+                    frontier.extend(reversed(kids) if offscreen else kids)
             except Exception:
                 continue
         return refs, lines
@@ -982,13 +979,22 @@ class BackgroundDesktop:
         return (f"Window {hwnd}: {platform_win.window_title(hwnd)}\n" + ("\n".join(lines) or
                 "(no controls exposed - try window_screenshot + window_click_xy)"))
 
-    # ---------------------------------------------- the tab on the user's screen
+    # ------------------------------------- the user's own, already-open tabs
+    def browser_windows(self) -> list[int]:
+        """The user's browser windows: on-screen ones topmost first, then minimized ones."""
+        ex = self.exclude()
+        wins = [h for h, *_ in platform_win.list_windows(exclude=ex)
+                if platform_win.window_process(h).lower() in BROWSER_EXES]
+        wins += [h for h, _t, proc in platform_win.minimized_windows(exclude=ex)
+                 if (proc or "").lower() in BROWSER_EXES and h not in wins]
+        return wins
+
     def screen_browser(self) -> int:
-        """The browser window the user is looking at: the topmost visible one."""
-        for hwnd, *_ in platform_win.list_windows(exclude=self.exclude()):
-            if platform_win.window_process(hwnd).lower() in BROWSER_EXES:
-                return hwnd
-        raise ActionError("I don't see a browser window on your screen right now (it may be minimized).")
+        """The browser window the user is looking at (or last looked at)."""
+        wins = self.browser_windows()
+        if not wins:
+            raise ActionError("I don't see an Edge/Chrome window open.")
+        return wins[0]
 
     def _chrome_parts(self, root):
         """Tab strip items and the address bar, without walking into the page."""
@@ -1025,87 +1031,128 @@ class BackgroundDesktop:
                 continue
         return None
 
-    def screen_tab_url(self, switch_to: str = "") -> tuple[int, str, str]:
-        """(hwnd, url, title) of the tab on the user's screen."""
+    @staticmethod
+    def _selected(tab) -> bool:
         import uiautomation as auto
 
-        hwnd = self.screen_browser()
-        root = auto.ControlFromHandle(hwnd)
-        tabs, address = self._chrome_parts(root)
-        if switch_to:
-            self._switch(hwnd, tabs, switch_to)
-            tabs, address = self._chrome_parts(root)
-        url = ""
-        if address is not None:
-            vp = address.GetPattern(auto.PatternId.ValuePattern)
-            try:
-                url = normalize_url(vp.Value if vp is not None else "")
-            except Exception:
-                url = ""
-        return hwnd, url, platform_win.window_title(hwnd)
+        try:
+            sp = tab.GetPattern(auto.PatternId.SelectionItemPattern)
+            return bool(sp and sp.IsSelected)
+        except Exception:
+            return False
 
-    def _switch(self, hwnd: int, tabs, want: str):
+    def _find_tab(self, want: str):
+        """(hwnd, root) of the user's window holding the tab `want`, with that tab
+        brought to the front. Searches all their browser windows."""
         import uiautomation as auto
 
-        names = [((t.Name or "").strip(), False) for t in tabs]
-        i = pick_tab(names, want)
-        if i is None:
-            raise ActionError(f"No tab matching {want!r}. Tabs: " + "; ".join(n for n, _ in names))
-        before = platform_win.window_title(hwnd)
-        pat = tabs[i].GetPattern(auto.PatternId.SelectionItemPattern)
-        if pat is None or not pat.Select():
-            raise ActionError("Couldn't switch to that tab.")
-        end = time.monotonic() + 1.5               # until the window shows the new page
-        while time.monotonic() < end and platform_win.window_title(hwnd) == before:
-            time.sleep(0.03)
+        everything = []
+        for k, hwnd in enumerate(self.browser_windows()):
+            root = auto.ControlFromHandle(hwnd)
+            if root is None:
+                continue
+            tabs, _ = self._chrome_parts(root)
+            names = [((t.Name or "").strip(), False) for t in tabs]
+            everything += [n for n, _ in names]
+            i = pick_tab(names, want) if (k == 0 or not want.isdigit()) else None   # numbers: the front window
+            if i is None:
+                continue
+            if not self._selected(tabs[i]):
+                before = platform_win.window_title(hwnd)
+                pat = tabs[i].GetPattern(auto.PatternId.SelectionItemPattern)
+                if pat is None or not pat.Select():
+                    raise ActionError("Couldn't bring that tab to the front.")
+                end = time.monotonic() + 1.5           # until the window shows that page
+                while time.monotonic() < end and platform_win.window_title(hwnd) == before:
+                    time.sleep(0.03)
+            return hwnd, root
+        raise ActionError(f"No open tab matching {want!r}. Your tabs: " + "; ".join(everything))
 
-    def screen_tab(self, switch_to: str = "") -> str:
+    def _window(self, want: str = ""):
         import uiautomation as auto
 
+        if want:
+            return self._find_tab(want)
         hwnd = self.screen_browser()
         root = auto.ControlFromHandle(hwnd)
         if root is None:
             raise ActionError("UI Automation can't see inside your browser window.")
-        tabs, address = self._chrome_parts(root)
-        if switch_to:
-            self._switch(hwnd, tabs, switch_to)
-            tabs, address = self._chrome_parts(root)
-        url = ""
-        if address is not None:
+        return hwnd, root
+
+    def _url(self, address) -> str:
+        import uiautomation as auto
+
+        if address is None:
+            return ""
+        try:
+            vp = address.GetPattern(auto.PatternId.ValuePattern)
+            return normalize_url(vp.Value if vp is not None else "")
+        except Exception:
+            return ""
+
+    def screen_tab_url(self, switch_to: str = "") -> tuple[int, str, str]:
+        """(hwnd, url, title) of the user's tab."""
+        hwnd, root = self._window(switch_to)
+        _tabs, address = self._chrome_parts(root)
+        return hwnd, self._url(address), platform_win.window_title(hwnd)
+
+    def _visible_text(self, doc, limit: int = 4000) -> str:
+        import uiautomation as auto
+
+        try:
+            tp = doc.GetPattern(auto.PatternId.TextPattern)
+            if tp is None:
+                return ""
             try:
-                vp = address.GetPattern(auto.PatternId.ValuePattern)
-                url = normalize_url(vp.Value if vp is not None else "")
-            except Exception:
-                pass
-        rows = []
-        for n, t in enumerate(tabs, 1):
-            sel = False
-            try:
-                sp = t.GetPattern(auto.PatternId.SelectionItemPattern)
-                sel = bool(sp and sp.IsSelected)
-            except Exception:
-                pass
-            rows.append(f"{'*' if sel else ' '} {n}. {(t.Name or '').strip()[:70]}")
-        doc = self._page_document(root)
-        text, lines = "", []
-        if doc is not None:
-            try:
-                tp = doc.GetPattern(auto.PatternId.TextPattern)
-                if tp is not None:
-                    text = (tp.DocumentRange.GetText(2500) or "").strip()
+                ranges = tp.GetVisibleRanges() or []
+                text = "\n".join((r.GetText(-1) or "") for r in ranges).strip()
             except Exception:
                 text = ""
-            refs, lines = self._collect(doc, max_depth=45, max_refs=220, seconds=4.0, skip_root=True)
+            return (text or (tp.DocumentRange.GetText(limit) or "")).strip()[:limit]
+        except Exception:
+            return ""
+
+    def tab_state(self, hwnd: int, root=None, header: bool = True) -> str:
+        import uiautomation as auto
+
+        root = root or auto.ControlFromHandle(hwnd)
+        tabs, address = self._chrome_parts(root)
+        out = []
+        if header:
+            rows = [f"{'*' if self._selected(t) else ' '} {n}. {(t.Name or '').strip()[:70]}"
+                    for n, t in enumerate(tabs, 1)]
+            out += [f"Your browser: window {hwnd} ({platform_win.window_process(hwnd)})",
+                    f"Showing tab: {platform_win.window_title(hwnd)}", f"URL: {self._url(address) or '(unknown)'}"]
+            if rows:
+                out.append("Tabs in this window (* = showing):\n" + "\n".join(rows))
+        doc = self._page_document(root)
+        lines = []
+        if doc is not None:
+            text = self._visible_text(doc)
+            if text:
+                out.append("What's visible on the page:\n" + text)
+            refs, lines = self._collect(doc, max_depth=45, max_refs=250, seconds=4.0, skip_root=True,
+                                        offscreen=True)
             self.elements[hwnd] = refs
-        out = [f"Your on-screen browser: window {hwnd} ({platform_win.window_process(hwnd)})",
-               f"Active tab: {platform_win.window_title(hwnd)}", f"URL: {url or '(unknown)'}"]
-        if rows:
-            out.append("Tabs in this window (* = showing):\n" + "\n".join(rows))
-        if text:
-            out.append("Page text (start):\n" + text[:2500])
-        out.append("Page elements (use with window_click / window_type, window=%d):\n" % hwnd
-                   + ("\n".join(lines) or "(the page exposes no elements - use browser_take_screen_tab)"))
+        self.web_windows.add(hwnd)
+        out.append("Page elements - act on them with window_click / window_type, window=%d:\n" % hwnd
+                   + ("\n".join(lines) or "(the page exposes no elements)"))
         return "\n\n".join(out)
+
+    def screen_tab(self, switch_to: str = "") -> str:
+        hwnd, root = self._window(switch_to)
+        return self.tab_state(hwnd, root)
+
+    def _after(self, hwnd: int, msg: str) -> str:
+        """After acting in one of the user's web tabs, show the page's new state
+        right away so the model doesn't spend a turn re-reading it."""
+        if hwnd not in self.web_windows:
+            return msg
+        time.sleep(0.12)                             # let the page react to the click
+        try:
+            return msg + "\n\n" + self.tab_state(hwnd, header=False)
+        except Exception:
+            return msg
 
     def _el(self, hwnd: int, ref: int):
         ctrl = self.elements.get(hwnd, {}).get(int(ref))
@@ -1119,21 +1166,41 @@ class BackgroundDesktop:
         self._check(hwnd)
         ctrl = self._el(hwnd, ref)
         P = auto.PatternId
-        for pid, method in ((P.InvokePattern, "Invoke"), (P.TogglePattern, "Toggle"),
-                            (P.SelectionItemPattern, "Select"), (P.ExpandCollapsePattern, "Expand"),
-                            (P.LegacyIAccessiblePattern, "DoDefaultAction")):
-            pat = ctrl.GetPattern(pid)
-            if pat is not None:
-                try:
-                    getattr(pat, method)()
-                    return f"Activated [{ref}] ({method})."
-                except Exception:
-                    continue
+        try:
+            if ctrl.IsOffscreen:
+                sp = ctrl.GetPattern(P.ScrollItemPattern)
+                if sp is not None:
+                    sp.ScrollIntoView()
+        except Exception:
+            pass
+        # Web pages often make a <div> clickable around the text: if the element
+        # itself has no action, its nearest actionable parent gets it.
+        chain, node = [ctrl], ctrl
+        for _ in range(3):
+            try:
+                node = node.GetParentControl()
+            except Exception:
+                node = None
+            if node is None or node.ControlTypeName in ("DocumentControl", "WindowControl", "PaneControl"):
+                break
+            chain.append(node)
+        for target in chain:
+            for pid, method in ((P.InvokePattern, "Invoke"), (P.SelectionItemPattern, "Select"),
+                                (P.TogglePattern, "Toggle"), (P.ExpandCollapsePattern, "Expand"),
+                                (P.LegacyIAccessiblePattern, "DoDefaultAction")):
+                pat = target.GetPattern(pid)
+                if pat is not None:
+                    try:
+                        if getattr(pat, method)() is False:
+                            continue
+                        return self._after(hwnd, f"Activated [{ref}] ({method}).")
+                    except Exception:
+                        continue
         rect = ctrl.BoundingRectangle
         cx, cy = (rect.left + rect.right) // 2, (rect.top + rect.bottom) // 2
         if not platform_win.post_click(hwnd, cx, cy):
             raise ActionError(f"Control [{ref}] can't be pressed in the background.")
-        return f"Sent a click to [{ref}]."
+        return self._after(hwnd, f"Sent a click to [{ref}].")
 
     def click_xy(self, hwnd: int, x: int, y: int, double: bool = False) -> str:
         self._check(hwnd)
@@ -1152,7 +1219,7 @@ class BackgroundDesktop:
         if vp is not None:
             new = text if mode != "append" else (vp.Value or "") + text
             if vp.SetValue(new):
-                return f"Set the text of [{ref}]."
+                return self._after(hwnd, f"Set the text of [{ref}].")
         native = ctrl.NativeWindowHandle
         if native and platform_win.post_text(native, text, replace=(mode != "append")):
             return f"Typed into [{ref}]."
@@ -1324,17 +1391,16 @@ def work_style_prompt(style: str, has_background: bool) -> str:
     if style == "background":
         return ("Working alongside the user (IMPORTANT): the user keeps using their PC while you work, so work in "
                 "the background and never wait for them:\n"
-                "- Web tasks happen in the USER'S OWN signed-in Microsoft Edge: browser_open opens a new background "
-                "tab there (minimized, no focus stealing - they can keep gaming). Their Google/Microsoft/school "
-                "accounts are already signed in, so just go. Use browser_use_my_browser to see their open tabs and "
-                "work in one of them.\n"
-                + ("- What's ON THE USER'S SCREEN: browser_screen_tab shows the Edge tab they're looking at "
-                   "(URL, their other tabs, the page text, numbered elements, and a picture). Work in that very "
-                   "tab with window_click / window_type on those refs - no mouse needed - or switch_to another of "
-                   "their tabs. For bigger jobs (writing in the Google Doc they have open, long forms), use "
-                   "browser_take_screen_tab: it opens the same page in your signed-in Edge, and online-doc edits "
-                   "show up live on their screen. Whenever they say 'this', 'this page/tab/doc' or 'what I'm "
-                   "looking at', start with browser_screen_tab.\n" if IS_WINDOWS else "") +
+                "- New web tasks (nothing already open for it): browser_open opens a new background "
+                "tab in your copy of their signed-in Edge (minimized, no focus stealing - they can keep gaming). Their Google/Microsoft/school "
+                "accounts are already signed in, so just go.\n"
+                + ("- THE USER'S OWN TABS COME FIRST: if the task is about something they already have open "
+                   "(a quiz, a form, an email, 'this page', 'my tab'), call browser_screen_tab (switch_to: part "
+                   "of the tab's title if it isn't the one showing) and do the work IN THAT TAB with "
+                   "window_click / window_type. Do NOT open a new tab or copy it for that. Read the visible "
+                   "text, act, read the new state that comes back, keep going - e.g. answer a question, press "
+                   "Next, answer the next one. If something you need is '(scrolled off)', window_click scrolls "
+                   "to it, and window_scroll scrolls the page.\n" if IS_WINDOWS else "") +
                 "- After every browser action you get the page's numbered elements AND a picture of the tab. Look "
                 "at both and keep going - no separate screenshot call needed.\n"
                 "- If a page still returns a [SIGN-IN NEEDED] note, tell the user in one line and keep doing any "
