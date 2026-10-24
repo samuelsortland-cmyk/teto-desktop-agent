@@ -158,6 +158,7 @@ def _cli(style, confirms):
 def test_cli_background_tools_registered_and_dispatched():
     a, ui, _, bgt = _cli("background", [])
     assert "browser_open" in a.tool_specs
+    a.tab_policy.note_task("open example.com")
     res = a._handle_tool("browser_open", {"url": "example.com"})
     assert res["content"][0]["text"].startswith("Opened") and bgt.calls == [("browser_open", {"url": "example.com"})]
     assert ui.asked == []                                  # background tools never need permission

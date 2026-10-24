@@ -289,6 +289,8 @@ class CliAgent:
         self.tool_specs = {**TOOL_SPECS, **self.bg_specs}
         self._fg_allowed = False
         self.eagle = False
+        from .mytabs import TabPolicy
+        self.tab_policy = TabPolicy()           # no new tabs unless the user asks
         self._loop = asyncio.new_event_loop()
         self._loop_thread = threading.Thread(target=self._loop.run_forever, name="teto-sdk", daemon=True)
         self._loop_thread.start()
@@ -377,6 +379,7 @@ class CliAgent:
             return {"content": [{"type": "text", "text": "Not executed: the user pressed stop."}],
                     "is_error": True}
         try:
+            self.tab_policy.check(name, args or {})
             if name == "say":
                 msg = str(args.get("message", "")).strip()
                 if not msg:
@@ -393,6 +396,7 @@ class CliAgent:
                 ans = self.ui.ask(q, choices)
                 if ans is None:
                     raise UserAbort()
+                self.tab_policy.note_answer(q, ans)
                 self.ui.status("working")
                 out = f"The user answered: {ans}"
             elif name == "open_target":
@@ -558,6 +562,7 @@ class CliAgent:
 
     def run_task(self, task: str, fresh: bool = False) -> str:
         self._fg_allowed = False
+        self.tab_policy.note_task(task, fresh=fresh)
         try:
             c = self.computer
             c.inputs.fast = self.eagle                    # Eagle Eyes: snappy, game-ready input

@@ -435,13 +435,21 @@ class SettingsWindow:
         self.v_see = tk.BooleanVar(value=cfg.auto_screenshots)
         self.v_showb = tk.BooleanVar(value=cfg.show_browser)
         for text, var in (("Full permission - just do it, never ask", self.v_auton),
-                          ("Work in my signed-in Edge", self.v_real),
+                          ("New tabs (only if asked) use my signed-in Edge", self.v_real),
                           ("See the page after every action", self.v_see),
                           ("Show Teto's browser window", self.v_showb)):
             tk.Checkbutton(side, text=text, variable=var, **chk).pack(anchor="w")
-        tk.Label(side, text="Background: Teto works in background tabs of your Edge (with your\n"
-                            "logins) and talks to apps directly, so you can keep using your PC.", bg=BG, fg=GREY,
-                 font=(fam, 8), justify="left").pack(anchor="w", pady=(0, 12))
+        link_row = tk.Frame(side, bg=BG)
+        link_row.pack(anchor="w", pady=(4, 0))
+        ok = getattr(self.app, "link_connected", lambda: False)()
+        self.link_lbl = tk.Label(link_row, text="Teto Link: connected ✓" if ok else "Teto Link: not connected",
+                                 bg=BG, fg=(PINK if ok else GREY), font=f)
+        self.link_lbl.pack(side="left")
+        tk.Button(link_row, text="Connect my Edge", command=self._connect_edge, relief="flat", bg=PINK,
+                  fg="white", activebackground=PINK, font=f, padx=8).pack(side="left", padx=(8, 0))
+        tk.Label(side, text="Teto works IN the tabs you already have open (your quiz, form, email)\n"
+                            "while you do something else. She opens new tabs only if you ask.", bg=BG, fg=GREY,
+                 font=(fam, 8), justify="left").pack(anchor="w", pady=(2, 12))
         tk.Label(side, text="Personality", bg=BG, fg=PINK, font=fb).pack(anchor="w")
         self.v_windows = tk.BooleanVar(value=cfg.stand_on_windows)
         self.v_remind = tk.BooleanVar(value=cfg.reminders)
@@ -552,6 +560,11 @@ class SettingsWindow:
         if sel:
             del self.routines[sel[0]]
             self._refresh_routines()
+
+    def _connect_edge(self):
+        from tkinter import messagebox
+        text = self.app.connect_edge()
+        messagebox.showinfo("Connect my Edge", text, parent=self.win if hasattr(self, "win") else None)
 
     def _save(self):
         cfg = self.app.config

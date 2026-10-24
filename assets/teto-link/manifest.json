@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Teto Link",
+  "version": "1.0.0",
+  "description": "Lets your Teto desktop agent work in the tabs you already have open (only talks to Teto on this PC).",
+  "permissions": ["tabs", "scripting", "debugger", "alarms"],
+  "host_permissions": ["<all_urls>", "http://127.0.0.1/*"],
+  "background": {"service_worker": "background.js"},
+  "icons": {"128": "icon128.png", "48": "icon48.png"},
+  "action": {"default_title": "Teto Link", "default_icon": "icon48.png"}
+}

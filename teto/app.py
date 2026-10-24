@@ -94,6 +94,9 @@ class App:
         self.root.after(800, self._greet)
         self.root.after(20000, self._startup_ok)
         self.root.after(15000, self._auto_update_check)
+        self._link_was = False
+        self.root.after(2000, self._sync_link_extension)
+        self.root.after(4000, self._watch_link)
         self.root.after(30000, self._companion_tick)
 
     # ------------------------------------------------------------- setup
@@ -202,6 +205,68 @@ class App:
             self._hotkey.start()
         except Exception as e:
             print(f"[teto] global hotkey unavailable: {e}", file=sys.stderr)
+
+    # ------------------------------------------------ Teto Link (her Edge extension)
+    def link_extension_dir(self) -> str:
+        return os.path.join(app_dir(), "teto-link")
+
+    def _sync_link_extension(self) -> bool:
+        """Keep a stable copy of the extension where Edge loads it from, so
+        updates to Teto update the extension too."""
+        import shutil
+
+        src = os.path.join(resource_dir(), "teto-link")
+        if not os.path.isdir(src):
+            return False
+        try:
+            shutil.copytree(src, self.link_extension_dir(), dirs_exist_ok=True)
+            return True
+        except OSError:
+            return False
+
+    def link_connected(self) -> bool:
+        try:
+            return self.background.link.connected()
+        except Exception:
+            return False
+
+    def _watch_link(self):
+        now = self.link_connected()
+        if now and not self._link_was:
+            self.pet.say("Teto Link connected! I can work right in your tabs now ♪", 5)
+        self._link_was = now
+        self.root.after(5000, self._watch_link)
+
+    def connect_edge(self) -> str:
+        """One-time setup: show the user where the extension is and open Edge's
+        Extensions page. Returns the instructions to display."""
+        self._sync_link_extension()
+        path = self.link_extension_dir()
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(path)
+        except Exception:
+            pass
+        if sys.platform == "win32":
+            import subprocess
+            from . import platform_win
+            try:
+                os.startfile(path)                     # the folder to pick
+            except OSError:
+                pass
+            exe = platform_win._browser_exe()
+            if exe:
+                try:
+                    subprocess.Popen([exe, "edge://extensions" if "edge" in exe.lower() else "chrome://extensions"])
+                except OSError:
+                    pass
+        return ("Connect Teto to your Edge (one time, ~30 seconds):\n\n"
+                "1. On Edge's Extensions page that just opened, turn on 'Developer mode' (left side).\n"
+                "2. Click 'Load unpacked' and choose this folder (its path is copied - paste it):\n"
+                f"   {path}\n"
+                "3. That's it! Teto will say 'Teto Link connected'.\n\n"
+                "Then she can read and work in ANY tab you already have open - even ones in the "
+                "background - without opening new tabs or touching your mouse.")
 
     def _greet(self):
         if self.config.brain == "api":

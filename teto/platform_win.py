@@ -618,6 +618,33 @@ def launch_browser_with_debug(port: int, browser_path: str = "", user_data_dir: 
         return False
 
 
+def wake_chromium_accessibility(hwnd: int) -> None:
+    """Ask Chromium (Edge/Chrome) to build its page accessibility tree: send
+    WM_GETOBJECT to its Chrome_RenderWidgetHostHWND child windows, which is what
+    screen readers do."""
+    if not IS_WINDOWS:
+        return
+    found = []
+    proc_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def cb(child, _lp):
+        buf = ctypes.create_unicode_buffer(64)
+        user32.GetClassNameW(child, buf, 64)
+        if buf.value.startswith("Chrome_RenderWidgetHostHWND"):
+            found.append(child)
+        return True
+
+    try:
+        user32.EnumChildWindows(wintypes.HWND(hwnd), proc_type(cb), 0)
+        res = ctypes.c_size_t()
+        for child in found:
+            # WM_GETOBJECT, OBJID_CLIENT (-4) and Chromium's own id 1; never block on a hung window
+            for objid in (1, ctypes.c_long(-4).value & 0xFFFFFFFF):
+                user32.SendMessageTimeoutW(child, 0x003D, 0, objid, 0x0002, 200, ctypes.byref(res))
+    except Exception:
+        pass
+
+
 def process_running(image: str) -> bool:
     """True if a process with this exe name (e.g. 'msedge.exe') is running."""
     if not IS_WINDOWS:

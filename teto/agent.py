@@ -149,6 +149,8 @@ class Agent:
         self.bg_specs = background.specs() if background is not None else {}
         self._fg_allowed = False
         self.eagle = False
+        from .mytabs import TabPolicy
+        self.tab_policy = TabPolicy()           # no new tabs unless the user asks
 
     # ------------------------------------------------------------ plumbing
     @property
@@ -192,6 +194,7 @@ class Agent:
             self._set_fast(self.eagle)
             if fresh:
                 self.messages = []
+            self.tab_policy.note_task(task, fresh=fresh or not self.messages)
             now = _dt.datetime.now().strftime("%A %Y-%m-%d %H:%M")
             prefix = f"[{now}] " if not self.messages else ""
             self._append_user_content([{"type": "text", "text": prefix + task}])
@@ -360,6 +363,7 @@ class Agent:
                 results.append(res)
                 continue
             try:
+                self.tab_policy.check(b["name"], b.get("input") or {})
                 if is_computer:
                     if b["name"] not in ("screenshot", "cursor_position", "zoom", "wait"):
                         if not self._may_use_foreground():
@@ -409,6 +413,7 @@ class Agent:
             answer = self.ui.ask(q, choices[:6])
             if answer is None:
                 raise UserAbort()
+            self.tab_policy.note_answer(q, answer)
             return f"The user answered: {answer}"
         if name == "open_target":
             target = _req_str(inp, "target")

@@ -258,13 +258,6 @@ WINDOW_SPECS: dict[str, tuple[str, dict]] = {
 
 
 SCREEN_TAB_SPECS: dict[str, tuple[str, dict]] = {
-    "browser_screen_tab": ("Work in the user's OWN, ALREADY-OPEN Edge tab - the one they're looking at, or "
-                           "any other tab they have open (pass switch_to with part of its title). Returns the "
-                           "tab's URL, their open tabs, the visible page text and the page's numbered elements. "
-                           "Then act IN THAT TAB with window_click / window_type (window = the id shown): no new "
-                           "tab, no mouse, it works even while they use another app. Each of those actions "
-                           "comes back with the page's new state. switch_to brings that tab to the front of its "
-                           "window.", _obj({"switch_to": {"type": "string"}}, [])),
     "browser_take_screen_tab": ("Open a copy of the user's tab as a NEW tab in your own Edge. Only when the user "
                                 "asks for that, or when the work truly can't be done in their tab (e.g. writing "
                                 "long text into a Google Doc's canvas).",
@@ -885,6 +878,7 @@ class BackgroundDesktop:
         self.elements: dict[int, dict[int, Any]] = {}
         self.shot_scale: dict[int, float] = {}
         self.web_windows: set[int] = set()     # the user's browser windows we've read as web pages
+        self.last_hwnd: int | None = None
 
     @staticmethod
     def init_thread():
@@ -1023,7 +1017,7 @@ class BackgroundDesktop:
         while frontier and time.monotonic() < deadline:
             ctrl, depth = frontier.pop(0)
             try:
-                if ctrl.ControlTypeName == "DocumentControl" and not ctrl.IsOffscreen:
+                if ctrl.ControlTypeName == "DocumentControl":
                     return ctrl
                 if depth < 20:
                     frontier.extend((c, depth + 1) for c in ctrl.GetChildren())
@@ -1072,12 +1066,30 @@ class BackgroundDesktop:
         import uiautomation as auto
 
         if want:
-            return self._find_tab(want)
-        hwnd = self.screen_browser()
-        root = auto.ControlFromHandle(hwnd)
-        if root is None:
-            raise ActionError("UI Automation can't see inside your browser window.")
+            hwnd, root = self._find_tab(want)
+        else:
+            hwnd = self.screen_browser()
+            root = auto.ControlFromHandle(hwnd)
+            if root is None:
+                raise ActionError("UI Automation can't see inside your browser window.")
+        self._wake(hwnd, root)
         return hwnd, root
+
+    def _wake(self, hwnd: int, root) -> None:
+        """Edge only builds a page's accessibility tree on request, and drops it
+        for minimized windows: un-minimize it behind everything (no focus change),
+        ask Chromium to turn accessibility on, then wait for the page to appear."""
+        platform_win.restore_behind(hwnd)
+        platform_win.wake_chromium_accessibility(hwnd)
+        end = time.monotonic() + 2.5
+        while time.monotonic() < end:
+            doc = self._page_document(root)
+            try:
+                if doc is not None and doc.GetChildren():
+                    return
+            except Exception:
+                pass
+            time.sleep(0.1)
 
     def _url(self, address) -> str:
         import uiautomation as auto
@@ -1141,7 +1153,21 @@ class BackgroundDesktop:
 
     def screen_tab(self, switch_to: str = "") -> str:
         hwnd, root = self._window(switch_to)
+        self.last_hwnd = hwnd
         return self.tab_state(hwnd, root)
+
+    def list_tabs_text(self) -> str:
+        import uiautomation as auto
+
+        rows = []
+        for hwnd in self.browser_windows():
+            root = auto.ControlFromHandle(hwnd)
+            if root is None:
+                continue
+            tabs, _ = self._chrome_parts(root)
+            for t in tabs:
+                rows.append(f"{'*' if self._selected(t) else ' '} {(t.Name or '').strip()[:80]}  (window {hwnd})")
+        return "Your open tabs (* = showing in its window):\n" + ("\n".join(rows) or "(none found)")
 
     def _after(self, hwnd: int, msg: str) -> str:
         """After acting in one of the user's web tabs, show the page's new state
@@ -1250,10 +1276,16 @@ class BackgroundDesktop:
 class BackgroundTools:
     """What the brains call. Thread-safe; creates the browser lazily."""
 
-    def __init__(self, profile_dir: str, settings: Callable[[], dict], exclude: Callable[[], set] = set):
+    def __init__(self, profile_dir: str, settings: Callable[[], dict], exclude: Callable[[], set] = set,
+                 link=None):
+        from . import link as link_mod
+        from .mytabs import UserTabs
+
         self.settings = settings
         self.profile_dir = profile_dir
         self.exclude = exclude
+        self.link = link if link is not None else link_mod.shared()
+        self.user_tabs = UserTabs(self.link, self._d if IS_WINDOWS else None, settings)
         self._browser: BackgroundBrowser | None = None
         self._browser_actor: Actor | None = None
         self._desktop: BackgroundDesktop | None = None
@@ -1261,7 +1293,9 @@ class BackgroundTools:
         self._lock = threading.Lock()
 
     def specs(self) -> dict[str, tuple[str, dict]]:
-        return available_specs()
+        from .mytabs import MY_TAB_SPECS
+
+        return {**MY_TAB_SPECS, **available_specs()}
 
     def _b(self):
         with self._lock:
@@ -1288,6 +1322,10 @@ class BackgroundTools:
 
     def run(self, name: str, a: dict, should_stop=lambda: False):
         """Returns a string or a list of content blocks (Anthropic format)."""
+        if name.startswith("my_tab") or name == "browser_screen_tab":
+            if name == "browser_screen_tab":                     # older name
+                name, a = "my_tab_read", {"tab": a.get("switch_to", "")}
+            return self.user_tabs.run(name, a)
         if name in SCREEN_TAB_SPECS:
             return self._screen_tab_tool(name, a, should_stop)
         if name.startswith("browser_"):
@@ -1391,16 +1429,15 @@ def work_style_prompt(style: str, has_background: bool) -> str:
     if style == "background":
         return ("Working alongside the user (IMPORTANT): the user keeps using their PC while you work, so work in "
                 "the background and never wait for them:\n"
-                "- New web tasks (nothing already open for it): browser_open opens a new background "
-                "tab in your copy of their signed-in Edge (minimized, no focus stealing - they can keep gaming). Their Google/Microsoft/school "
+                "- Only when the user explicitly asks for something new (a new tab, a website, a search, a new "
+                "doc): browser_open opens a background tab in your copy of their signed-in Edge (minimized, no focus stealing - they can keep gaming). Their Google/Microsoft/school "
                 "accounts are already signed in, so just go.\n"
-                + ("- THE USER'S OWN TABS COME FIRST: if the task is about something they already have open "
-                   "(a quiz, a form, an email, 'this page', 'my tab'), call browser_screen_tab (switch_to: part "
-                   "of the tab's title if it isn't the one showing) and do the work IN THAT TAB with "
-                   "window_click / window_type. Do NOT open a new tab or copy it for that. Read the visible "
-                   "text, act, read the new state that comes back, keep going - e.g. answer a question, press "
-                   "Next, answer the next one. If something you need is '(scrolled off)', window_click scrolls "
-                   "to it, and window_scroll scrolls the page.\n" if IS_WINDOWS else "") +
+                + "- THE USER'S OWN TABS COME FIRST (hard rule): if the task is about anything they already have "
+                  "open (a quiz, test, form, email, document, 'this page', 'my tab'), do it IN THAT TAB: "
+                  "my_tab_read (tab: part of its title, or empty for the one they're looking at), then "
+                  "my_tab_click / my_tab_type / my_tab_select / my_tab_key / my_tab_scroll. Every action returns "
+                  "the page's new state - read it and keep going (answer, Next, answer...). NEVER open a new tab, "
+                  "a copy of their tab, or a search unless the user asked for that; it is blocked anyway.\n"
                 "- After every browser action you get the page's numbered elements AND a picture of the tab. Look "
                 "at both and keep going - no separate screenshot call needed.\n"
                 "- If a page still returns a [SIGN-IN NEEDED] note, tell the user in one line and keep doing any "
