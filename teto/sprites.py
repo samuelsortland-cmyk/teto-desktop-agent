@@ -93,7 +93,7 @@ OFF_Y = FRAME_H - GRID_H
 # Where props attach, in frame pixels (unflipped).
 ANCHORS = {
     "hand_r": (OFF_X + 17, OFF_Y + 22), "hand_l": (OFF_X + 7, OFF_Y + 22),
-    "hand_r_up": (OFF_X + 18, OFF_Y + 15), "hand_l_up": (OFF_X + 6, OFF_Y + 15),
+    "hand_r_up": (OFF_X + 20, OFF_Y + 16), "hand_l_up": (OFF_X + 4, OFF_Y + 16),
     "head": (OFF_X + 12, OFF_Y + 1), "eyes": (OFF_X + 12, OFF_Y + 10), "mouth": (OFF_X + 12, OFF_Y + 13),
     "front": (OFF_X + 12, OFF_Y + 21), "feet": (OFF_X + 12, FRAME_H - 1),
     "ground_r": (OFF_X + 26, FRAME_H - 1), "ground_l": (OFF_X - 2, FRAME_H - 1),
@@ -142,69 +142,105 @@ MOUTHS = {
 }
 
 # ------------------------------------------------------------------- arms
-# Viewer's right arm (cols 16-18). Left-arm versions are mirrored around x=12.
-_ERASE_R = {(16, 20): "G", (17, 20): "K", (16, 21): "G", (17, 21): "K", (18, 21): ".",
-            (16, 22): "g", (17, 22): "K", (18, 22): "."}
-_UP_R = {**_ERASE_R, (17, 18): "g", (18, 18): "g", (19, 18): "K", (16, 17): "K", (17, 17): "g",
-         (18, 17): "g", (19, 17): "K", (16, 16): "K", (17, 16): "R", (18, 16): "R", (19, 16): "K",
-         (16, 15): "K", (17, 15): "S", (18, 15): "S", (19, 15): "K", (17, 14): "K", (18, 14): "K"}
-_WAVE_R = {**_ERASE_R, (17, 18): "g", (18, 18): "K", (16, 17): "K", (17, 17): "g", (18, 17): "g",
-           (19, 17): "K", (17, 16): "K", (18, 16): "R", (19, 16): "R", (20, 16): "K", (17, 15): "K",
-           (18, 15): "S", (19, 15): "S", (20, 15): "K", (18, 14): "K", (19, 14): "K"}
-_POINT_R = {**_ERASE_R, (17, 18): "K", (18, 18): "K", (19, 18): "K", (20, 18): "K",
-            (17, 19): "g", (18, 19): "g", (19, 19): "R", (20, 19): "S", (21, 19): "K",
-            (17, 20): "K", (18, 20): "K", (19, 20): "K", (20, 20): "K"}
+# Teto's arms are part of the reference sprite: the grey sleeves with red cuffs
+# hanging at her sides (rows 19-23). Poses MOVE those same arms - they are cut
+# out of the body, then rotated about the shoulder - so she never has extra arms.
 
-
-# Arm straight out to the side (shoulder height).
-_OUT_R = {**_ERASE_R, (16, 18): "g", (17, 18): "R", (18, 18): "R", (19, 18): "R", (20, 18): "S", (21, 18): "K",
-          (16, 17): "K", (17, 17): "K", (18, 17): "K", (19, 17): "K", (20, 17): "K",
-          (17, 19): "K", (18, 19): "K", (19, 19): "K", (20, 19): "K"}
-# Arm half-raised (diagonal down-out) - a relaxed, open gesture.
-_MID_R = {**_ERASE_R, (17, 19): "g", (18, 19): "R", (19, 20): "R", (20, 20): "S", (21, 21): "K",
-          (16, 19): "K", (17, 20): "K", (18, 20): "K", (19, 21): "K", (20, 21): "K"}
-# Hand on hip - a confident, lively stance.
-_HIP_R = {**_ERASE_R, (16, 19): "K", (16, 20): "G", (17, 20): "S", (18, 20): "K",
-          (16, 21): "G", (17, 21): "S", (18, 21): "K", (15, 20): "K", (15, 21): "K"}
-# Walk swing: right arm nudged forward (A) / back (B) by a pixel.
-_SWINGF_R = {**_ERASE_R, (17, 20): "G", (18, 20): "K", (18, 21): "G", (19, 21): "K",
-             (18, 22): "G", (19, 22): "S", (20, 22): "K", (19, 23): "K"}
-_SWINGB_R = {**_ERASE_R, (15, 20): "K", (15, 21): "G", (16, 21): "G", (15, 22): "G", (16, 22): "S",
-             (14, 22): "K", (15, 23): "K", (16, 23): "K", (17, 21): "K", (17, 22): "K"}
-# Cheer: both fists up high (livelier than the open up_both).
-_CHEER_R = {**_UP_R, (17, 13): "K", (18, 13): "K", (17, 14): "S", (18, 14): "S"}
-# Clap - hands meeting in front.
-_CLAP_R = {**_ERASE_R, (16, 19): "K", (17, 19): "g", (18, 19): "S", (19, 19): "K",
-           (17, 20): "K", (18, 20): "K"}
+# The viewer's-right arm exactly as drawn in BASE (its pixels and outline).
+_ARM_R_PIXELS = {(15, 19), (16, 19), (17, 19), (16, 20), (17, 20), (16, 21), (17, 21), (18, 21),
+                 (16, 22), (17, 22), (18, 22), (17, 23)}
 
 
 def _mirror(d: dict) -> dict:
     return {(GRID_W - 1 - x, y): c for (x, y), c in d.items()}
 
 
-ARMS = {
-    "down": {},
-    "up_r": _UP_R,
-    "wave_r": _WAVE_R,
-    "up_l": _mirror(_UP_R),
-    "up_both": {**_UP_R, **_mirror(_UP_R)},
-    "point_r": _POINT_R,
-    "point_l": _mirror(_POINT_R),
-    "out_r": _OUT_R,
-    "out_l": _mirror(_OUT_R),
-    "out_both": {**_OUT_R, **_mirror(_OUT_R)},
-    "mid_r": _MID_R,
-    "mid_l": _mirror(_MID_R),
-    "mid_both": {**_MID_R, **_mirror(_MID_R)},
-    "hips": {**_HIP_R, **_mirror(_HIP_R)},
-    "swing_a": {**_SWINGF_R, **_mirror(_SWINGB_R)},   # right fwd, left back
-    "swing_b": {**_SWINGB_R, **_mirror(_SWINGF_R)},   # right back, left fwd
-    "cheer": {**_CHEER_R, **_mirror(_CHEER_R)},
-    "clap_a": {**_CLAP_R, **_mirror(_CLAP_R)},
-    "clap_b": {**_OUT_R, **_mirror(_OUT_R)},           # hands apart (pairs with clap_a)
-    "reach_r": _WAVE_R,                                # alias: reaching up
-    "wave_l": _mirror(_WAVE_R),
+def _mirror_set(s: set) -> set:
+    return {(GRID_W - 1 - x, y) for x, y in s}
+
+
+def _arm_cells(side: str) -> set:
+    return _ARM_R_PIXELS if side == "r" else _mirror_set(_ARM_R_PIXELS)
+
+
+# The body with both arms taken off: the dress gets its own side outline.
+_NOARM_R = {(15, 19): "G", (16, 19): "K", (16, 20): "K", (16, 21): "K", (16, 22): "K",
+            (17, 19): ".", (17, 20): ".", (17, 21): ".", (18, 21): ".", (17, 22): ".", (18, 22): ".",
+            (17, 23): "."}
+_NOARM = {**_NOARM_R, **_mirror(_NOARM_R)}
+
+# The arm itself, as a little sprite hanging from the shoulder: 2 px wide
+# (u = 0..1, from the body outward) and 4 px long (v = 0..3, shoulder to cuff) -
+# the same red shoulder band, grey sleeve and red cuff as the reference.
+_ARM_SPRITE = ["RR", "gg", "gg", "rR"]
+_SHOULDER_R = (17.0, 19.0)          # pivot: top of the sleeve, between its two columns
+
+
+def _rotated_arm(angle: float, side: str) -> dict:
+    """The real arm rotated `angle` degrees about the shoulder (0 = hanging down,
+    90 = straight out to the side, 180 = straight up; negative swings it in
+    front of her body). Returns pixel edits, outline included."""
+    import math
+
+    t = math.radians(angle)
+    dx, dy = math.sin(t), math.cos(t)          # along the arm (shoulder -> cuff)
+    px, py = math.cos(t), -math.sin(t)         # across the arm (body -> outside)
+    ox, oy = _SHOULDER_R
+    arm = {}
+    for y in range(int(oy) - 6, int(oy) + 7):
+        for x in range(int(ox) - 6, int(ox) + 7):
+            rx, ry = x + 0.5 - ox, y + 0.5 - oy
+            v = rx * dx + ry * dy
+            u = rx * px + ry * py + 1.0
+            if 0 <= u < 2 and 0 <= v < 4:
+                arm[(x, y)] = _ARM_SPRITE[int(v)][int(u)]
+    out = dict(arm)
+    for (x, y) in arm:                          # pixel-art outline around it
+        for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+            if (nx, ny) in arm or (nx, ny) in out:
+                continue
+            if math.hypot(nx + 0.5 - ox, ny + 0.5 - oy) < 1.6:
+                continue                        # keep the shoulder joint open
+            out[(nx, ny)] = "K"
+    return out if side == "r" else _mirror(out)
+
+
+def _original_arm(side: str) -> dict:
+    return {(x, y): BASE[y][x] for (x, y) in _arm_cells(side)}
+
+
+# name -> (right arm angle, left arm angle); None = hanging as drawn.
+# Angles are measured outward from hanging straight down.
+ARM_ANGLES = {
+    "down": (None, None),
+    "up_r": (135, None), "up_l": (None, 135), "up_both": (135, 135),
+    "wave_r": (118, None), "wave_l": (None, 118), "reach_r": (128, None),
+    "point_r": (90, None), "point_l": (None, 90),
+    "out_r": (80, None), "out_l": (None, 80), "out_both": (80, 80),
+    "mid_r": (45, None), "mid_l": (None, 45), "mid_both": (45, 45),
+    "hips": (28, 28),
+    "swing_a": (18, -10), "swing_b": (-10, 18),
+    "cheer": (145, 145),
+    "clap_a": (-14, -14), "clap_b": (35, 35),
 }
+
+
+def _arm_pose(right, left) -> dict:
+    """Pixel edits (relative to BASE) for a pose: arms off, then placed again."""
+    if right is None and left is None:
+        return {}
+    g = [list(r) for r in BASE]
+    for (x, y), c in _NOARM.items():
+        g[y][x] = c
+    for side, angle in (("r", right), ("l", left)):
+        cells = _original_arm(side) if angle is None else _rotated_arm(angle, side)
+        for (x, y), c in cells.items():
+            if 0 <= x < GRID_W and 0 <= y < GRID_H:
+                g[y][x] = c
+    return {(x, y): g[y][x] for y in range(GRID_H) for x in range(GRID_W) if g[y][x] != BASE[y][x]}
+
+
+ARMS = {name: _arm_pose(r, l) for name, (r, l) in ARM_ANGLES.items()}
 
 BODIES = ("", "bob", "squash", "stretch", "lean_l", "lean_r", "lie_l", "lie_r", "upside",
           "rot90", "rot180", "rot270")

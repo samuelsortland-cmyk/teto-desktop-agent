@@ -257,3 +257,21 @@ def test_props_and_anchors():
         assert img.width > 0
     for name in sprites.EFFECTS:
         sprites.make_effect(name, 2)
+
+
+def test_arm_poses_move_her_own_arms_never_add_extra_ones():
+    """Every pose takes the reference arms off and puts them back somewhere else -
+    no leftover sleeve where an arm used to hang, so she never has extra arms."""
+    base = sprites.build_grid(sprites.Pose()).px
+    assert ["".join(r) for r in base] == sprites.BASE             # "down" is the reference, untouched
+    for name, (right, left) in sprites.ARM_ANGLES.items():
+        g = sprites.build_grid(sprites.Pose(arms=name)).px
+        for side, angle in (("r", right), ("l", left)):
+            if angle is None:
+                continue
+            moved = sprites._rotated_arm(angle, side)
+            for (x, y) in sprites._arm_cells(side):
+                if (x, y) not in moved:
+                    assert g[y][x] in ".KG", (name, side, (x, y), g[y][x])   # sleeve gone from there
+        sleeves = sum(r.count("g") for r in g)
+        assert sleeves <= sum(r.count("g") for r in sprites.BASE) + 4, name  # never doubled
