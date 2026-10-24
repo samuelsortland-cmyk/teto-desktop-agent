@@ -10,6 +10,7 @@ and are released by the UI thread (or by Stop).
 from __future__ import annotations
 
 import datetime as _dt
+import json
 import os
 import queue
 import sys
@@ -220,8 +221,10 @@ class App:
             return False
         try:
             shutil.copytree(src, self.link_extension_dir(), dirs_exist_ok=True)
+            with open(os.path.join(src, "manifest.json"), "r", encoding="utf-8") as f:
+                self.background.link.ext_version = json.load(f).get("version", "")
             return True
-        except OSError:
+        except (OSError, ValueError):
             return False
 
     def link_connected(self) -> bool:

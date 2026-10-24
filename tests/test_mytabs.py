@@ -249,3 +249,19 @@ def test_real_extension_drives_an_existing_tab(tmp_path):
         if ctx:
             ctx.close()
         pw.stop()
+
+
+def test_link_tells_the_extension_which_version_to_run(monkeypatch):
+    monkeypatch.setattr(link_mod, "POLL_SECONDS", 0.3)
+    port = _free_port()
+    srv = link_mod.LinkServer(port)
+    srv.ext_version = "9.9.9"
+    srv.start()
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/poll",
+                                     headers={"X-Teto-Link": "1", "Origin": "chrome-extension://x"})
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(req, timeout=5) as r:
+            assert r.headers["X-Teto-Ext-Version"] == "9.9.9"
+    finally:
+        srv.stop()

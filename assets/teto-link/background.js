@@ -21,6 +21,9 @@ async function loop() {
         continue;
       }
       backoff = 1000;
+      // Teto updated the extension's files: reload so the new version runs (no clicks needed)
+      const want = r.headers.get('X-Teto-Ext-Version');
+      if (want && want !== chrome.runtime.getManifest().version) { chrome.runtime.reload(); return; }
       if (r.status === 204) continue;
       if (r.status !== 200) { await sleep(3000); continue; }
       const cmd = await r.json();
