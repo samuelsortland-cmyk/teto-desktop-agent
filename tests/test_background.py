@@ -425,3 +425,107 @@ def test_autonomous_takes_screen_without_asking():
     a._handle_tool("click", {"x": 3, "y": 4})
     assert ("click", 3, 4, "left", 1) in inputs.calls and ui.asked == []   # full permission: no prompt
     a.shutdown()
+
+
+# ------------------------------------------------- the tab on the user's screen
+class _Pat:
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+class _Ctl:
+    """Tiny stand-in for a uiautomation Control."""
+
+    def __init__(self, kind, name="", children=(), patterns=None):
+        self.ControlTypeName, self.Name = kind, name
+        self.children = list(children)
+        self.patterns = patterns or {}
+        self.IsOffscreen, self.IsEnabled = False, True
+
+    def GetChildren(self):
+        return self.children
+
+    def GetPattern(self, pid):
+        return self.patterns.get(pid)
+
+
+@pytest.fixture
+def fake_edge(monkeypatch):
+    import sys
+    PID = types.SimpleNamespace(ValuePattern="value", TogglePattern="toggle", SelectionItemPattern="sel",
+                                TextPattern="text", InvokePattern="invoke", ExpandCollapsePattern="exp",
+                                LegacyIAccessiblePattern="legacy")
+    state = {"title": "Essay - Google Docs", "selected": 0, "invoked": []}
+    titles = ["Essay - Google Docs", "Roblox Wiki"]
+
+    def tab(i):
+        def select():
+            state["selected"] = i
+            state["title"] = titles[i]
+            return True
+        return _Ctl("TabItemControl", titles[i],
+                    patterns={"sel": _Pat(Select=select, IsSelected=property(lambda s: False))})
+
+    tabs = [tab(0), tab(1)]
+    for i, t in enumerate(tabs):
+        t.patterns["sel"].IsSelected = (i == 0)
+    address = _Ctl("EditControl", "Address and search bar",
+                   patterns={"value": _Pat(Value="docs.google.com/document/d/abc/edit")})
+    share = _Ctl("ButtonControl", "Share", patterns={"invoke": _Pat(Invoke=lambda: state["invoked"].append("Share"))})
+    doc = _Ctl("DocumentControl", "Essay", children=[share, _Ctl("TextControl", "My essay title")],
+               patterns={"text": _Pat(DocumentRange=_Pat(GetText=lambda n: "My essay title\nOnce upon a time"))})
+    root = _Ctl("WindowControl", "Edge", children=[
+        _Ctl("PaneControl", "", children=[_Ctl("TabControl", "", children=tabs), address]),
+        _Ctl("PaneControl", "", children=[doc])])
+    fake = types.SimpleNamespace(PatternId=PID, ControlFromHandle=lambda h: root,
+                                 InitializeUIAutomationInCurrentThread=lambda: None)
+    monkeypatch.setitem(sys.modules, "uiautomation", fake)
+    monkeypatch.setattr(background, "IS_WINDOWS", True)
+    pw = background.platform_win
+    monkeypatch.setattr(pw, "list_windows", lambda exclude=(): [(11, 0, 0, 800, 600), (42, 0, 0, 1280, 900)])
+    monkeypatch.setattr(pw, "window_process", lambda h: {11: "Code.exe", 42: "msedge.exe"}[h])
+    monkeypatch.setattr(pw, "window_title", lambda h: state["title"] + " - Microsoft Edge")
+    monkeypatch.setattr(background.BackgroundDesktop, "_check", lambda self, h: h)
+    return state
+
+
+def test_screen_tab_reads_the_users_visible_edge_tab(fake_edge):
+    tools = BackgroundTools("/nonexistent", settings=lambda: {"auto_screenshots": False})
+    out = tools.run("browser_screen_tab", {})
+    assert "window 42" in out and "URL: https://docs.google.com/document/d/abc/edit" in out   # skipped VS Code
+    assert "* 1. Essay - Google Docs" in out and "  2. Roblox Wiki" in out
+    assert "Once upon a time" in out and '[1] Button "Share"' in out
+    assert "Address" not in out.split("Page elements")[1]          # browser frame isn't mixed into the page
+    assert tools.run("window_click", {"window": 42, "ref": 1}).startswith("Activated [1]")
+    assert fake_edge["invoked"] == ["Share"]                       # acted in the real tab, no mouse
+    out = tools.run("browser_screen_tab", {"switch_to": "roblox"})
+    assert fake_edge["selected"] == 1 and "Active tab: Roblox Wiki" in out
+    with pytest.raises(ActionError, match="No tab matching"):
+        tools.run("browser_screen_tab", {"switch_to": "netflix"})
+    tools.shutdown()
+
+
+def test_take_screen_tab_opens_same_page_in_teto_edge(fake_edge):
+    tools = BackgroundTools("/nonexistent", settings=lambda: {})
+    opened = []
+    real_run = tools.run
+
+    def run(name, a, should_stop=lambda: False):
+        if name == "browser_open":
+            opened.append(a["url"])
+            return "Opened in your Edge, background tab 1."
+        return real_run(name, a, should_stop)
+
+    tools.run = run
+    out = tools.run("browser_take_screen_tab", {})
+    assert opened == ["https://docs.google.com/document/d/abc/edit"] and "same page" in out
+    tools.shutdown()
+
+
+def test_url_and_tab_helpers():
+    assert background.normalize_url("docs.google.com/x") == "https://docs.google.com/x"
+    assert background.normalize_url("edge://settings") == "edge://settings"
+    assert background.normalize_url("search words here") == ""
+    tabs = [("Inbox - Gmail", True), ("Essay - Google Docs", False)]
+    assert background.pick_tab(tabs, "2") == 1 and background.pick_tab(tabs, "gmail") == 0
+    assert background.pick_tab(tabs, "zzz") is None
