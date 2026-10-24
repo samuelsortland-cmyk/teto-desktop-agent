@@ -125,24 +125,37 @@ class App:
         scale = max(2, round(self.config.pet_scale * self.ui_scale()))
         return Pet(self.root, self, scale=scale, custom_sprite=custom)
 
-    def _make_menu(self) -> tk.Menu:
-        m = tk.Menu(self.root, tearoff=0, bg="#3a2330", fg="#fff1f4", activebackground="#e0435f",
-                    font=(self.font[0], 10))
-        m.add_command(label="Chat with Teto", command=lambda: self.toggle_panel(force_show=True))
-        m.add_command(label="Stop current task", command=self.stop_all)
-        m.add_command(label="New chat", command=self.new_chat)
-        m.add_separator()
+    def _make_menu(self):
+        from .panel import TetoMenu
+
         self._wander_var = tk.BooleanVar(value=self.config.wander)
-        m.add_checkbutton(label="Wander around", variable=self._wander_var, command=self._toggle_wander)
-        m.add_command(label="Take a nap", command=lambda: self.pet.set_mood("sleeping"))
-        m.add_command(label="Do a trick!", command=self._random_trick)
-        m.add_separator()
-        m.add_command(label="\U0001F441  Eagle Eyes (take my screen)...", command=self.eagle_eyes)
-        m.add_command(label="Settings...", command=self.open_settings)
-        m.add_command(label="Check for updates", command=lambda: self.check_updates(manual=True))
-        m.add_separator()
-        m.add_command(label="Quit", command=self.quit)
-        return m
+        items = [
+            {"icon": "✉", "label": "Chat with Teto", "kind": "item",
+             "command": lambda: self.toggle_panel(force_show=True)},
+            {"icon": "■", "label": "Stop current task", "kind": "item", "command": self.stop_all, "hint": "Esc"},
+            {"icon": "↻", "label": "New chat", "kind": "item", "command": self.new_chat},
+            {"kind": "sep"},
+            {"icon": "♪", "label": "Wander around", "kind": "toggle", "var": self._wander_var,
+             "command": self._toggle_wander},
+            {"icon": "☾", "label": "Take a nap", "kind": "item", "command": lambda: self.pet.set_mood("sleeping")},
+            {"icon": "★", "label": "Do a trick!", "kind": "item", "command": self._random_trick},
+            {"kind": "sep"},
+            {"icon": "◉", "label": "Eagle Eyes", "sub": "Let Teto take my screen", "kind": "eagle",
+             "command": self.eagle_eyes},
+            {"icon": "⚙", "label": "Settings", "kind": "item", "command": self.open_settings},
+            {"icon": "⇣", "label": "Check for updates", "kind": "item",
+             "command": lambda: self.check_updates(manual=True)},
+            {"kind": "sep"},
+            {"icon": "⏻", "label": "Quit", "kind": "danger", "command": self.quit},
+        ]
+        return TetoMenu(self.root, items, status=self._menu_status, name_font=(self.font[0], 12, "bold"))
+
+    def _menu_status(self) -> str:
+        try:
+            text = self.panel.status_lbl.cget("text")
+            return text.replace("●", "").strip() or "Online"
+        except Exception:
+            return "Online"
 
     def _make_background(self) -> BackgroundTools:
         return BackgroundTools(
@@ -639,10 +652,7 @@ class App:
 
     def show_menu(self, x, y):
         self._wander_var.set(self.config.wander)
-        try:
-            self.menu.tk_popup(x, y)
-        finally:
-            self.menu.grab_release()
+        self.menu.show(x, y)
 
     EAGLE_PREFIX = (
         "[EAGLE EYES MODE] The user has handed you direct control of their screen to do this for them, right now, "

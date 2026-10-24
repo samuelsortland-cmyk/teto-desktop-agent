@@ -52,3 +52,28 @@ def test_toggle_switch_flips_on_click(root):
     t = P.Toggle(f, "Thing", var, ("TkDefaultFont", 10), ("TkDefaultFont", 8))
     t._flip()
     assert var.get() is True
+
+
+def test_right_click_menu_runs_items_and_toggles(root):
+    from teto import panel as P
+    ran = []
+    var = tk.BooleanVar(value=False)
+    items = [{"icon": "✉", "label": "Chat", "kind": "item", "command": lambda: ran.append("chat")},
+             {"kind": "sep"},
+             {"icon": "♪", "label": "Wander", "kind": "toggle", "var": var, "command": lambda: ran.append("wander")},
+             {"icon": "◉", "label": "Eagle Eyes", "sub": "take my screen", "kind": "eagle",
+              "command": lambda: ran.append("eagle")},
+             {"icon": "⏻", "label": "Quit", "kind": "danger", "command": lambda: ran.append("quit")}]
+    m = P.TetoMenu(root, items, status=lambda: "Working...")
+    m.show(10, 10)
+    root.update()
+    assert m.win is not None and m.win.winfo_ismapped()
+    m._run(items[2])                      # the switch flips and the menu closes
+    root.update()
+    assert var.get() is True and m.win is None and ran == ["wander"]
+    m.show(5000, 5000)                    # off-screen request is kept on screen
+    root.update()
+    assert m.win.winfo_x() < root.winfo_screenwidth()
+    m._run(items[3])
+    root.update()
+    assert ran == ["wander", "eagle"]

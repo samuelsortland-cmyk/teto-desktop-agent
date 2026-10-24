@@ -1002,3 +1002,187 @@ class SettingsWindow:
         cfg.save()
         self.app.apply_settings(rebuild_pet=(old_scale != cfg.pet_scale))
         self.win.destroy()
+
+
+class TetoMenu:
+    """Teto's right-click menu, drawn to match the chat and settings windows:
+    a rounded white card with her face, hover pills, a switch and Eagle Eyes."""
+
+    KEY = "#ff00fe"           # transparent corners on Windows
+
+    def __init__(self, root, items, status=lambda: "Online", font_family="TkDefaultFont", name_font=None):
+        """items: list of dicts {label, command, icon?, kind: item|toggle|eagle|danger|sep, var?}."""
+        self.root = root
+        self.items = items
+        self.status = status
+        self.k = max(1.0, root.winfo_fpixels("1i") / 96.0)
+        ui = _ui_family(root)
+        self.f, self.fb, self.fs = (ui, 10), (ui, 10, "bold"), (ui, 8)
+        self.fname = name_font or (ui, 12, "bold")
+        self.win = None
+
+    def show(self, x, y):
+        self.close()
+        k = self.k
+        w = self.win = tk.Toplevel(self.root)
+        w.overrideredirect(True)
+        w.attributes("-topmost", True)
+        rounded = platform_win.IS_WINDOWS
+        bg = self.KEY if rounded else C_LINE
+        w.configure(bg=bg)
+        if rounded:
+            try:
+                w.attributes("-transparentcolor", self.KEY)
+            except tk.TclError:
+                bg = C_LINE
+        width = int(236 * k)
+        row_h, sep_h, head_h, pad = int(32 * k), int(11 * k), int(58 * k), int(8 * k)
+        height = head_h + pad * 2
+        for it in self.items:
+            height += sep_h if it["kind"] == "sep" else (int(46 * k) if it["kind"] == "eagle" else row_h)
+        c = self.c = tk.Canvas(w, width=width, height=height, bg=bg, highlightthickness=0, bd=0)
+        c.pack()
+        # card + soft shadow
+        _round_rect(c, 3, 4, width - 1, height - 1, 16, fill=C_SHADOW, outline="")
+        _round_rect(c, 1, 1, width - 3, height - 4, 16, fill=C_BG, outline=C_LINE)
+        # header: red scallop band, face, name, status
+        _round_rect(c, 1, 1, width - 3, int(14 * k), 12, fill=RED, outline="")
+        c.create_rectangle(2, int(7 * k), width - 4, int(10 * k), fill=RED, outline="")
+        step = int(12 * k)
+        for sx in range(step // 2, width - step // 2, step):
+            c.create_oval(sx - step // 2, int(4 * k), sx + step // 2, int(14 * k), fill=RED, outline="")
+        face = _teto_face_icon(self.root, max(24, int(28 * k)))
+        tx = int(16 * k)
+        if face is not None:
+            c.create_image(tx, int(36 * k), image=face, anchor="w")
+            tx += face.width() + int(8 * k)
+        c.create_text(tx, int(29 * k), text="Teto", anchor="w", fill=C_INK, font=self.fname)
+        st = self.status()
+        busy = st not in ("Online", "Done ♪")
+        c.create_text(tx, int(45 * k), text=f"● {st}", anchor="w", fill=RED if busy else OK_D, font=self.fs)
+        c.create_line(int(12 * k), head_h, width - int(14 * k), head_h, fill=C_LINE)
+
+        y0 = head_h + pad
+        for n, it in enumerate(self.items):
+            if it["kind"] == "sep":
+                c.create_line(int(16 * k), y0 + sep_h // 2, width - int(18 * k), y0 + sep_h // 2, fill=C_LINE)
+                y0 += sep_h
+                continue
+            h = int(46 * k) if it["kind"] == "eagle" else row_h
+            self._item(c, n, it, int(8 * k), y0 + 1, width - int(11 * k), y0 + h - 1)
+            y0 += h
+
+        # place by the cursor, kept on screen
+        sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+        x = min(max(0, x), sw - width - 4)
+        y = y - height if y + height > sh - 40 else y
+        w.geometry(f"{width}x{height}+{int(x)}+{max(0, int(y))}")
+        w.lift()
+        w.bind("<Escape>", lambda e: self.close())
+        self._fg0 = None
+        w.after(10, self._grab)
+        w.after(150, self._watch_focus)
+        w.after(200, lambda: platform_win.exclude_from_capture(w))
+
+    def _grab(self):
+        if not self.win:
+            return
+        try:
+            self.win.focus_force()
+            self.win.grab_set()
+        except tk.TclError:
+            pass
+        self.win.bind("<Button-1>", self._click_outside, add="+")
+        self.win.bind("<Button-3>", self._click_outside, add="+")
+
+    def _click_outside(self, e):
+        w = self.win
+        if not w:
+            return
+        x0, y0 = w.winfo_rootx(), w.winfo_rooty()
+        if not (x0 <= e.x_root <= x0 + w.winfo_width() and y0 <= e.y_root <= y0 + w.winfo_height()):
+            self.close()
+
+    def _watch_focus(self):
+        """Close when the user switches to another app (clicks elsewhere on the desktop)."""
+        if not self.win:
+            return
+        fg = platform_win.foreground_window()
+        try:
+            mine = int(self.win.wm_frame(), 16)
+        except (tk.TclError, ValueError):
+            mine = 0
+        if fg and self._fg0 is None:
+            self._fg0 = fg
+        elif fg and fg not in (self._fg0, mine):
+            self.close()
+            return
+        self.win.after(150, self._watch_focus)
+
+    def close(self):
+        if self.win is not None:
+            try:
+                self.win.grab_release()
+                self.win.destroy()
+            except tk.TclError:
+                pass
+            self.win = None
+
+    def _run(self, it):
+        self.close()
+        if it["kind"] == "toggle":
+            it["var"].set(not it["var"].get())
+        self.root.after(1, it["command"])
+
+    def _item(self, c, n, it, x0, y0, x1, y1):
+        tag = f"item{n}"
+        k = self.k
+        eagle, danger, toggle = it["kind"] == "eagle", it["kind"] == "danger", it["kind"] == "toggle"
+        base_fill = "#fff0f3" if eagle else C_BG
+        bg = _round_rect(c, x0, y0, x1, y1, (y1 - y0) // 2 if not eagle else 12, fill=base_fill,
+                         outline=("#ffc9d4" if eagle else base_fill), tags=tag)
+        ink = RED if (eagle or danger) else C_INK
+        icon = it.get("icon", "")
+        ix = x0 + int(16 * k)
+        cy = (y0 + y1) / 2
+        icon_item = c.create_text(ix, cy if not eagle else cy, text=icon, fill=RED if (eagle or danger) else C_MUTED,
+                                  font=(self.f[0], 11), tags=tag)
+        tx = x0 + int(34 * k)
+        if eagle:
+            label = c.create_text(tx, cy - 8 * k, text=it["label"], anchor="w", fill=RED, font=self.fb, tags=tag)
+            sub = c.create_text(tx, cy + 9 * k, text=it.get("sub", ""), anchor="w", fill=C_MUTED, font=self.fs,
+                                tags=tag)
+        else:
+            label = c.create_text(tx, cy, text=it["label"], anchor="w", fill=ink,
+                                  font=self.fb if danger else self.f, tags=tag)
+            sub = None
+        sw_items = []
+        if toggle:                                   # a little switch, like in Settings
+            on = bool(it["var"].get())
+            sw_w, sw_h = int(34 * k), int(18 * k)
+            sx1 = x1 - int(10 * k)
+            sx0 = sx1 - sw_w
+            sw_items.append(_round_rect(c, sx0, cy - sw_h / 2, sx1, cy + sw_h / 2, sw_h // 2,
+                                        fill=RED if on else "#ddd2d7", outline="", tags=tag))
+            r = sw_h / 2 - 3
+            kx = sx1 - sw_h / 2 if on else sx0 + sw_h / 2
+            sw_items.append(c.create_oval(kx - r, cy - r, kx + r, cy + r, fill="white", outline="", tags=tag))
+        elif it.get("hint"):
+            c.create_text(x1 - int(10 * k), cy, text=it["hint"], anchor="e", fill=C_MUTED, font=self.fs, tags=tag)
+
+        def enter(_e):
+            c.itemconfig(bg, fill=RED if not eagle else "#ffe0e7", outline=RED if not eagle else RED)
+            if not eagle:
+                c.itemconfig(label, fill="white")
+                c.itemconfig(icon_item, fill="white")
+            c.configure(cursor="hand2")
+
+        def leave(_e):
+            c.itemconfig(bg, fill=base_fill, outline=("#ffc9d4" if eagle else base_fill))
+            c.itemconfig(label, fill=ink)
+            c.itemconfig(icon_item, fill=RED if (eagle or danger) else C_MUTED)
+            c.configure(cursor="")
+
+        c.tag_bind(tag, "<Enter>", enter)
+        c.tag_bind(tag, "<Leave>", leave)
+        c.tag_bind(tag, "<ButtonRelease-1>", lambda e: self._run(it))
