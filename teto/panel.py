@@ -24,8 +24,8 @@ OK = "#8fe3a1"
 OK_D = "#2e9e5b"
 
 MODELS = ["default", "opus", "sonnet", "haiku", "claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1"]
-WORK_STYLES = {"background": "Background - don't use my mouse/keyboard (recommended)",
-               "foreground": "Foreground - Teto may use my mouse & keyboard"}
+WORK_STYLES = {"background": "Background - I keep my mouse & keyboard",
+               "foreground": "Foreground - Teto may use them"}
 SPEEDS = {"fast": "Fast - quickest, snappiest (recommended)", "balanced": "Balanced - a bit more careful",
           "max": "Max - slowest but most thorough", "custom": "Custom (use Effort below)"}
 BRAINS = {"subscription": "Claude subscription (Pro/Max sign-in)", "api": "Anthropic API key (advanced)"}
@@ -580,162 +580,334 @@ class Panel:
             self._redraw()
 
 
+class PillButton(tk.Canvas):
+    """A rounded button drawn on a canvas (filled red, or outlined)."""
+
+    def __init__(self, parent, text, command, font, filled=True, bg=None, k=1.0):
+        self._bg = bg or parent.cget("bg")
+        super().__init__(parent, bg=self._bg, highlightthickness=0, bd=0, cursor="hand2")
+        self.text, self.command, self.font, self.filled, self.k = text, command, font, filled, k
+        tmp = self.create_text(0, 0, text=text, font=font, anchor="nw")
+        x0, y0, x1, y1 = self.bbox(tmp)
+        self.delete(tmp)
+        self.w, self.h = (x1 - x0) + int(28 * k), (y1 - y0) + int(14 * k)
+        self.configure(width=self.w, height=self.h)
+        self._draw(False)
+        self.bind("<Enter>", lambda e: self._draw(True))
+        self.bind("<Leave>", lambda e: self._draw(False))
+        self.bind("<Button-1>", lambda e: self.command())
+
+    def _draw(self, hover):
+        self.delete("all")
+        if self.filled:
+            fill, ink, outline = (RED_D if hover else RED), "white", (RED_D if hover else RED)
+        else:
+            fill, ink, outline = ("#ffe9ee" if hover else self._bg), RED, RED
+        _round_rect(self, 1, 1, self.w - 1, self.h - 1, self.h // 2, fill=fill, outline=outline, width=2)
+        self.create_text(self.w / 2, self.h / 2, text=self.text, fill=ink, font=self.font)
+
+
+class Toggle(tk.Frame):
+    """A settings row: label (+ hint) on the left, an on/off switch on the right."""
+
+    def __init__(self, parent, text, variable, font, font_s, hint="", k=1.0):
+        bg = parent.cget("bg")
+        super().__init__(parent, bg=bg)
+        self.var = variable
+        words = tk.Frame(self, bg=bg)
+        words.pack(side="left", fill="x", expand=True)
+        tk.Label(words, text=text, bg=bg, fg=C_INK, font=font, anchor="w").pack(anchor="w")
+        if hint:
+            tk.Label(words, text=hint, bg=bg, fg=C_MUTED, font=font_s, anchor="w", justify="left").pack(anchor="w")
+        self.sw = tk.Canvas(self, width=int(40 * k), height=int(22 * k), bg=bg, highlightthickness=0, bd=0,
+                            cursor="hand2")
+        self.sw.pack(side="right", padx=(10, 0))
+        for wdg in (self, self.sw, words, *words.winfo_children()):
+            wdg.bind("<Button-1>", self._flip)
+        self.var.trace_add("write", lambda *_: self._draw())
+        self._draw()
+
+    def _flip(self, _e=None):
+        self.var.set(not self.var.get())
+
+    def _draw(self):
+        c, on = self.sw, bool(self.var.get())
+        c.delete("all")
+        w, h = int(c.cget("width")), int(c.cget("height"))
+        _round_rect(c, 1, 1, w - 1, h - 1, h // 2, fill=RED if on else "#ddd2d7", outline="")
+        r = h // 2 - 3
+        cx = w - h // 2 if on else h // 2
+        c.create_oval(cx - r, h // 2 - r, cx + r, h // 2 + r, fill="white", outline="")
+
+
 class SettingsWindow:
+    PAGES = [("brain", "Brain"), ("work", "Working"), ("personality", "Personality"),
+             ("routines", "Routines"), ("updates", "Updates")]
+
     def __init__(self, root, app, font):
         self.app = app
         cfg = app.config
-        fam = font[0]
-        f, fb = (fam, 10), (fam, 10, "bold")
+        self.k = k = max(1.0, root.winfo_fpixels("1i") / 96.0)
+        self.pw = int(660 * k)
+        ui = _ui_family(root)
+        f, fb, fs = (ui, 10), (ui, 10, "bold"), (ui, 8)
+        self.f, self.fb, self.fs = f, fb, fs
         w = self.win = tk.Toplevel(root)
         w.title("Teto - Settings")
-        w.configure(bg=BG, padx=14, pady=12)
+        w.configure(bg=C_BG)
         w.attributes("-topmost", True)
         w.resizable(False, False)
         w._font_b = fb
+        self._style_ttk(root, f)
 
-        def row(label, widget, r):
-            tk.Label(w, text=label, bg=BG, fg=TEXT, font=fb, anchor="w").grid(row=r, column=0, sticky="w", pady=4)
-            widget.grid(row=r, column=1, sticky="we", pady=4, padx=(10, 0))
+        # header: scallop, Teto's face, title, close
+        Panel._scallop(self, w)
+        head = tk.Frame(w, bg=C_BG, padx=16, pady=10)
+        head.pack(fill="x")
+        self._face = _teto_face_icon(root, max(28, int(34 * k)))
+        if self._face is not None:
+            tk.Label(head, image=self._face, bg=C_BG).pack(side="left", padx=(0, 10))
+        titles = tk.Frame(head, bg=C_BG)
+        titles.pack(side="left")
+        tk.Label(titles, text="Settings", bg=C_BG, fg=C_INK, font=(font[0], 13, "bold")).pack(anchor="w")
+        from . import __version__
+        tk.Label(titles, text=f"Make Teto yours ♪  ·  v{__version__}", bg=C_BG, fg=C_MUTED, font=fs).pack(anchor="w")
+        x = tk.Label(head, text="✕", bg=C_BG, fg=C_MUTED, font=(ui, 13), cursor="hand2")
+        x.pack(side="right")
+        x.bind("<Button-1>", lambda e: w.destroy())
+        tk.Frame(w, bg=C_LINE, height=1).pack(fill="x")
 
-        ent = dict(bg="#1a0e15", fg=TEXT, insertbackground=PINK, font=f, bd=0, highlightthickness=2,
-                   highlightbackground=RED_D, highlightcolor=RED)
-        self.brain = ttk.Combobox(w, values=list(BRAINS.values()), state="readonly", width=36)
-        self.brain.set(BRAINS.get(cfg.brain, BRAINS["subscription"]))
-        row("Brain", self.brain, 0)
-        self.key = tk.Entry(w, show="•", width=38, **ent)
+        # footer
+        foot = tk.Frame(w, bg=C_BG, padx=16, pady=12)
+        foot.pack(fill="x", side="bottom")
+        tk.Frame(w, bg=C_LINE, height=1).pack(fill="x", side="bottom")
+        PillButton(foot, "Save", self._save, fb, True, k=k).pack(side="right")
+        PillButton(foot, "Cancel", w.destroy, fb, False, k=k).pack(side="right", padx=(0, 8))
+        self.err = tk.Label(foot, text="", bg=C_BG, fg=C_ERR, font=f, anchor="w")
+        self.err.pack(side="left", fill="x", expand=True)
+
+        # sidebar + pages
+        main = tk.Frame(w, bg=C_BG)
+        main.pack(fill="both", expand=True)
+        self.nav = tk.Frame(main, bg=C_SOFT, padx=10, pady=12, width=int(150 * k))
+        self.nav.pack(side="left", fill="y")
+        self.nav.pack_propagate(False)
+        self.pages_box = tk.Frame(main, bg=C_BG, padx=18, pady=14)
+        self.pages_box.pack(side="left", fill="both", expand=True)
+        self.pages: dict[str, tk.Frame] = {}
+        self.nav_items: dict[str, tk.Canvas] = {}
+        for key, label in self.PAGES:
+            self.pages[key] = tk.Frame(self.pages_box, bg=C_BG)
+            item = tk.Canvas(self.nav, height=int(34 * k), bg=C_SOFT, highlightthickness=0, bd=0, cursor="hand2")
+            item.pack(fill="x", pady=2)
+            item.bind("<Button-1>", lambda e, key=key: self.show_page(key))
+            item.bind("<Configure>", lambda e, key=key: self._draw_nav(key))
+            item.label = label
+            self.nav_items[key] = item
+
+        self._build_brain(self.pages["brain"], cfg)
+        self._build_work(self.pages["work"], cfg)
+        self._build_personality(self.pages["personality"], cfg)
+        self._build_routines(self.pages["routines"], cfg)
+        self._build_updates(self.pages["updates"], cfg)
+        self.current = "brain"
+        self.show_page("brain")
+
+        w.geometry(f"{int(660 * k)}x{int(620 * k)}")
+        w.update_idletasks()
+        sw, sh = w.winfo_screenwidth(), w.winfo_screenheight()
+        w.geometry(f"+{(sw - int(660 * k)) // 2}+{max(0, (sh - int(620 * k)) // 2 - 20)}")
+        w.after(300, lambda: platform_win.exclude_from_capture(w))
+
+    # ------------------------------------------------------------ chrome
+    def _style_ttk(self, root, f):
+        st = ttk.Style(root)
+        try:
+            st.theme_use("clam")
+        except tk.TclError:
+            pass
+        st.configure("Teto.TCombobox", fieldbackground=C_FIELD, background=C_FIELD, foreground=C_INK,
+                     arrowcolor=RED, bordercolor=C_FIELD, lightcolor=C_FIELD, darkcolor=C_FIELD, padding=6,
+                     selectbackground=C_FIELD, selectforeground=C_INK)
+        st.map("Teto.TCombobox", fieldbackground=[("readonly", C_FIELD)], bordercolor=[("focus", RED)],
+               lightcolor=[("focus", RED)])
+        root.option_add("*TCombobox*Listbox.background", C_BG)
+        root.option_add("*TCombobox*Listbox.foreground", C_INK)
+        root.option_add("*TCombobox*Listbox.selectBackground", RED)
+        root.option_add("*TCombobox*Listbox.selectForeground", "white")
+        root.option_add("*TCombobox*Listbox.font", f)
+
+    def _draw_nav(self, key):
+        c = self.nav_items[key]
+        c.delete("all")
+        w, h = c.winfo_width(), c.winfo_height()
+        on = key == getattr(self, "current", "brain")
+        if on:
+            _round_rect(c, 0, 1, w, h - 1, h // 2, fill=RED, outline="")
+        c.create_text(14, h / 2, text=c.label, anchor="w", fill="white" if on else C_INK,
+                      font=self.fb if on else self.f)
+
+    def show_page(self, key):
+        self.current = key
+        for p in self.pages.values():
+            p.pack_forget()
+        self.pages[key].pack(fill="both", expand=True)
+        for k in self.nav_items:
+            self._draw_nav(k)
+
+    def _title(self, page, text, sub=""):
+        tk.Label(page, text=text, bg=C_BG, fg=C_INK, font=(self.f[0], 13, "bold")).pack(anchor="w")
+        if sub:
+            tk.Label(page, text=sub, bg=C_BG, fg=C_MUTED, font=self.fs, justify="left").pack(anchor="w")
+        tk.Frame(page, bg=C_BG, height=8).pack()
+
+    def _card(self, page):
+        card = tk.Frame(page, bg=C_SOFT, padx=14, pady=10, highlightthickness=1, highlightbackground=C_LINE)
+        card.pack(fill="x", pady=(0, 10))
+        card._font_b = self.fb
+        return card
+
+    def _field_row(self, card, label, widget_factory):
+        row = tk.Frame(card, bg=C_SOFT)
+        row.pack(fill="x", pady=4)
+        tk.Label(row, text=label, bg=C_SOFT, fg=C_INK, font=self.f, anchor="w", width=16).pack(side="left")
+        widget = widget_factory(row)
+        widget.pack(side="left", fill="x", expand=True)
+        return widget
+
+    def _entry(self, parent, **kw):
+        return tk.Entry(parent, bg=C_FIELD, fg=C_INK, insertbackground=RED, font=self.f, bd=0, relief="flat",
+                        highlightthickness=1, highlightbackground=C_FIELD, highlightcolor=RED, **kw)
+
+    def _spin(self, parent, lo, hi, value):
+        s = tk.Spinbox(parent, from_=lo, to=hi, width=6, bg=C_FIELD, fg=C_INK, insertbackground=RED, font=self.f,
+                       bd=0, relief="flat", highlightthickness=1, highlightbackground=C_FIELD, highlightcolor=RED,
+                       buttonbackground=C_FIELD)
+        s.delete(0, "end")
+        s.insert(0, str(value))
+        return s
+
+    def _combo(self, parent, values, value, readonly=True, width=30):
+        cb = ttk.Combobox(parent, values=values, state="readonly" if readonly else "normal", width=width,
+                          style="Teto.TCombobox", font=self.f)
+        cb.set(value)
+        return cb
+
+    def _toggle(self, card, text, var, hint=""):
+        Toggle(card, text, var, self.f, self.fs, hint, self.k).pack(fill="x", pady=3)
+
+    # ------------------------------------------------------------ pages
+    def _build_brain(self, page, cfg):
+        self._title(page, "Brain", "How Teto thinks and sees.")
+        card = self._card(page)
+        self.brain = self._field_row(card, "Brain", lambda p: self._combo(
+            p, list(BRAINS.values()), BRAINS.get(cfg.brain, BRAINS["subscription"])))
+        self.key = self._field_row(card, "API key (advanced)", lambda p: self._entry(p, show="•"))
         self.key.insert(0, cfg.api_key)
-        row("API key (advanced only)", self.key, 1)
-        self.model = ttk.Combobox(w, values=MODELS, width=30)
-        self.model.set(cfg.model)
-        row("Model", self.model, 2)
-        self.speed = ttk.Combobox(w, values=list(SPEEDS.values()), state="readonly", width=30)
-        self.speed.set(SPEEDS.get(cfg.speed, SPEEDS["fast"]))
-        row("Speed", self.speed, 3)
-        self.effort = ttk.Combobox(w, values=EFFORTS, state="readonly", width=30)
-        self.effort.set(cfg.effort)
-        row("Steps per task", tk.Label(w, text="unlimited - she keeps going until it's done ♪", bg=BG,
-                                       fg=PINK, font=f), 4)
-        self.shot = ttk.Combobox(w, values=["1280", "1366", "1568", "1920", "2560"], width=30)
-        self.shot.set(str(cfg.screenshot_max_long_edge))
-        row("Screenshot size (px)", self.shot, 5)
-        self.monitor = tk.Spinbox(w, from_=1, to=8, width=8, **ent)
-        self.monitor.delete(0, "end"); self.monitor.insert(0, str(cfg.monitor))
-        row("Monitor", self.monitor, 6)
-        self.scale = tk.Spinbox(w, from_=2, to=10, width=8, **ent)
-        self.scale.delete(0, "end"); self.scale.insert(0, str(cfg.pet_scale))
-        row("Pet size", self.scale, 7)
+        self.model = self._field_row(card, "Model", lambda p: self._combo(p, MODELS, cfg.model, readonly=False))
+        card = self._card(page)
+        self.speed = self._field_row(card, "Speed", lambda p: self._combo(
+            p, list(SPEEDS.values()), SPEEDS.get(cfg.speed, SPEEDS["fast"])))
+        self.effort = self._field_row(card, "Effort (custom)", lambda p: self._combo(p, EFFORTS, cfg.effort))
+        self.shot = self._field_row(card, "Screenshot size", lambda p: self._combo(
+            p, ["1280", "1366", "1568", "1920", "2560"], str(cfg.screenshot_max_long_edge), readonly=False))
+        self.monitor = self._field_row(card, "Monitor", lambda p: self._spin(p, 1, 8, cfg.monitor))
+        row = tk.Frame(page, bg=C_BG)
+        row.pack(fill="x", pady=(2, 0))
+        tk.Label(row, text="Steps per task: unlimited - she keeps going until it's done ♪", bg=C_BG, fg=RED,
+                 font=self.fs).pack(side="left")
+        PillButton(row, "Sign out", self._sign_out, self.fs, False, k=self.k).pack(side="right")
 
-        chk = dict(bg=BG, fg=TEXT, selectcolor=BG2, activebackground=BG, activeforeground=PINK, font=f, bd=0)
-        self.v_shell = tk.BooleanVar(value=cfg.confirm_shell)
-        self.v_keys = tk.BooleanVar(value=cfg.confirm_risky_keys)
-        self.v_wander = tk.BooleanVar(value=cfg.wander)
-        tk.Checkbutton(w, text="Ask before running shell commands", variable=self.v_shell, **chk).grid(
-            row=8, column=0, columnspan=2, sticky="w")
-        tk.Checkbutton(w, text="Ask before permanent-delete shortcuts", variable=self.v_keys, **chk).grid(
-            row=9, column=0, columnspan=2, sticky="w")
-        tk.Checkbutton(w, text="Let Teto wander around when idle", variable=self.v_wander, **chk).grid(
-            row=10, column=0, columnspan=2, sticky="w")
-
-        # right-hand column: personality + updates
-        side = tk.Frame(w, bg=BG)
-        side._font_b = fb
-        side.grid(row=0, column=2, rowspan=14, sticky="n", padx=(22, 0))
-        tk.Label(side, text="Sharing your PC", bg=BG, fg=PINK, font=fb).pack(anchor="w")
-        self.style = ttk.Combobox(side, values=list(WORK_STYLES.values()), state="readonly", width=40)
-        self.style.set(WORK_STYLES.get(cfg.work_style, WORK_STYLES["background"]))
-        self.style.pack(anchor="w", pady=(2, 2))
+    def _build_work(self, page, cfg):
+        self._title(page, "Working", "How Teto shares your PC. She works IN the tabs you already have open\n"
+                                      "while you do something else, and opens new tabs only if you ask.")
+        card = self._card(page)
+        self.style = self._field_row(card, "Sharing your PC", lambda p: self._combo(
+            p, list(WORK_STYLES.values()), WORK_STYLES.get(cfg.work_style, WORK_STYLES["background"]), width=34))
         self.v_auton = tk.BooleanVar(value=cfg.autonomous)
         self.v_real = tk.BooleanVar(value=cfg.prefer_real_browser)
         self.v_see = tk.BooleanVar(value=cfg.auto_screenshots)
         self.v_showb = tk.BooleanVar(value=cfg.show_browser)
-        for text, var in (("Full permission - just do it, never ask", self.v_auton),
-                          ("New tabs (only if asked) use my signed-in Edge", self.v_real),
-                          ("See the page after every action", self.v_see),
-                          ("Show Teto's browser window", self.v_showb)):
-            tk.Checkbutton(side, text=text, variable=var, **chk).pack(anchor="w")
-        link_row = tk.Frame(side, bg=BG)
-        link_row.pack(anchor="w", pady=(4, 0))
+        self.v_shell = tk.BooleanVar(value=cfg.confirm_shell)
+        self.v_keys = tk.BooleanVar(value=cfg.confirm_risky_keys)
+        card = self._card(page)
+        self._toggle(card, "Full permission", self.v_auton, "Just do it - no \"should I?\" questions")
+        self._toggle(card, "See the page after every action", self.v_see)
+        self._toggle(card, "New tabs (only if asked) use my signed-in Edge", self.v_real)
+        self._toggle(card, "Show Teto's own browser window", self.v_showb)
+        self._toggle(card, "Ask before shell commands", self.v_shell, "Ignored while Full permission is on")
+        self._toggle(card, "Ask before permanent-delete shortcuts", self.v_keys)
+        card = self._card(page)
+        row = tk.Frame(card, bg=C_SOFT)
+        row.pack(fill="x")
         ok = getattr(self.app, "link_connected", lambda: False)()
-        self.link_lbl = tk.Label(link_row, text="Teto Link: connected ✓" if ok else "Teto Link: not connected",
-                                 bg=BG, fg=(PINK if ok else GREY), font=f)
-        self.link_lbl.pack(side="left")
-        tk.Button(link_row, text="Connect my Edge", command=self._connect_edge, relief="flat", bg=PINK,
-                  fg="white", activebackground=PINK, font=f, padx=8).pack(side="left", padx=(8, 0))
-        tk.Label(side, text="Teto works IN the tabs you already have open (your quiz, form, email)\n"
-                            "while you do something else. She opens new tabs only if you ask.", bg=BG, fg=GREY,
-                 font=(fam, 8), justify="left").pack(anchor="w", pady=(2, 12))
-        tk.Label(side, text="Personality", bg=BG, fg=PINK, font=fb).pack(anchor="w")
+        words = tk.Frame(row, bg=C_SOFT)
+        words.pack(side="left", fill="x", expand=True)
+        tk.Label(words, text="Teto Link", bg=C_SOFT, fg=C_INK, font=self.fb).pack(anchor="w")
+        self.link_lbl = tk.Label(words, text="● connected - works in background tabs" if ok else
+                                 "● not connected - one-time, 30-sec setup", bg=C_SOFT,
+                                 fg=OK_D if ok else C_MUTED, font=self.fs)
+        self.link_lbl.pack(anchor="w")
+        PillButton(row, "Connect my Edge", self._connect_edge, self.fs, not ok, bg=C_SOFT, k=self.k).pack(side="right")
+
+    def _build_personality(self, page, cfg):
+        self._title(page, "Personality", "How Teto lives on your desktop.")
+        self.v_wander = tk.BooleanVar(value=cfg.wander)
         self.v_windows = tk.BooleanVar(value=cfg.stand_on_windows)
         self.v_remind = tk.BooleanVar(value=cfg.reminders)
         self.v_human = tk.BooleanVar(value=cfg.human_typing)
         self.v_typos = tk.BooleanVar(value=cfg.typos)
-        for text, var in (("Jump onto / ride my windows", self.v_windows),
-                          ("Helpful nudges & suggestions", self.v_remind),
-                          ("Human-like typing & mouse", self.v_human),
-                          ("Occasional typos (auto-fixed)", self.v_typos)):
-            tk.Checkbutton(side, text=text, variable=var, **chk).pack(anchor="w")
-        wpm_row = tk.Frame(side, bg=BG)
-        wpm_row.pack(anchor="w", pady=(4, 0))
-        tk.Label(wpm_row, text="Typing speed (WPM)", bg=BG, fg=TEXT, font=f).pack(side="left")
-        self.wpm = tk.Spinbox(wpm_row, from_=20, to=250, width=5, **ent)
-        self.wpm.delete(0, "end"); self.wpm.insert(0, str(cfg.typing_wpm))
-        self.wpm.pack(side="left", padx=6)
+        card = self._card(page)
+        self._toggle(card, "Wander around when idle", self.v_wander)
+        self._toggle(card, "Jump onto / ride my windows", self.v_windows)
+        self._toggle(card, "Helpful nudges & suggestions", self.v_remind, "Water, stretch and eye-rest reminders")
+        self._toggle(card, "Human-like typing & mouse", self.v_human, "Off automatically with Full permission")
+        self._toggle(card, "Occasional typos (auto-fixed)", self.v_typos)
+        card = self._card(page)
+        self.scale = self._field_row(card, "Pet size", lambda p: self._spin(p, 2, 10, cfg.pet_scale))
+        self.wpm = self._field_row(card, "Typing speed (WPM)", lambda p: self._spin(p, 20, 250, cfg.typing_wpm))
 
-        tk.Label(side, text="Updates", bg=BG, fg=PINK, font=fb).pack(anchor="w", pady=(16, 0))
-        from . import __version__
-        tk.Label(side, text=f"You have Teto {__version__}", bg=BG, fg=DIM, font=f).pack(anchor="w")
-        tk.Label(side, text="GitHub repository (owner/name):", bg=BG, fg=TEXT, font=f).pack(anchor="w", pady=(6, 0))
-        self.repo = tk.Entry(side, width=30, **ent)
-        self.repo.insert(0, cfg.update_repo)
-        self.repo.pack(anchor="w", fill="x")
-        self.v_auto = tk.BooleanVar(value=cfg.auto_update)
-        tk.Checkbutton(side, text="Update by herself when idle", variable=self.v_auto, **chk).pack(anchor="w")
-        ub = tk.Frame(side, bg=BG)
-        ub._font_b = fb
-        ub.pack(anchor="w", pady=(6, 0))
-        pixel_button(ub, "CHECK NOW", self._check_now, color=PANEL).pack(side="left")
-        pixel_button(ub, "FROM ZIP...", self._from_zip, color=PANEL).pack(side="left", padx=(6, 0))
-        tk.Label(side, text="Only changed files are downloaded.\nPython & Claude Code are never re-downloaded.",
-                 bg=BG, fg=GREY, font=(fam, 8), justify="left").pack(anchor="w", pady=(6, 0))
-
-        # routines
-        tk.Label(w, text="Routines (Teto runs these on her own every day)", bg=BG, fg=PINK, font=fb).grid(
-            row=11, column=0, columnspan=2, sticky="w", pady=(12, 2))
+    def _build_routines(self, page, cfg):
+        self._title(page, "Routines", "Teto runs these on her own every day.")
         self.routines = [dict(r) for r in cfg.routines if isinstance(r, dict)]
-        self.rlist = tk.Listbox(w, height=5, bg="#1a0e15", fg=TEXT, font=f, bd=0, highlightthickness=2,
-                                highlightbackground=RED_D, selectbackground=RED)
-        self.rlist.grid(row=12, column=0, columnspan=2, sticky="we")
-        add = tk.Frame(w, bg=BG)
-        add._font_b = fb
-        add.grid(row=13, column=0, columnspan=2, sticky="we", pady=4)
-        self.r_time = tk.Entry(add, width=6, **ent)
+        card = self._card(page)
+        self.rlist = tk.Listbox(card, height=8, bg=C_BG, fg=C_INK, font=self.f, bd=0, highlightthickness=1,
+                                highlightbackground=C_LINE, selectbackground=RED, selectforeground="white",
+                                activestyle="none")
+        self.rlist.pack(fill="x")
+        add = tk.Frame(card, bg=C_SOFT)
+        add.pack(fill="x", pady=(10, 0))
+        self.r_time = self._entry(add, width=6)
         self.r_time.insert(0, "09:00")
-        self.r_time.pack(side="left")
-        self.r_task = tk.Entry(add, width=30, **ent)
-        self.r_task.insert(0, "")
-        self.r_task.pack(side="left", padx=6, fill="x", expand=True)
-        pixel_button(add, "+", self._add_routine, color=PANEL).pack(side="left")
-        pixel_button(add, "−", self._del_routine, color=PANEL).pack(side="left", padx=(4, 0))
+        self.r_time.pack(side="left", ipady=4)
+        self.r_task = self._entry(add)
+        self.r_task.pack(side="left", padx=8, fill="x", expand=True, ipady=4)
+        PillButton(add, "Remove", self._del_routine, self.fs, False, bg=C_SOFT, k=self.k).pack(side="right")
+        PillButton(add, "Add", self._add_routine, self.fs, True, bg=C_SOFT, k=self.k).pack(side="right", padx=(0, 6))
+        tk.Label(page, text="Time is 24-hour (HH:MM). Select a routine to remove it.", bg=C_BG, fg=C_MUTED,
+                 font=self.fs).pack(anchor="w")
         self._refresh_routines()
 
-        btns = tk.Frame(w, bg=BG)
-        btns._font_b = fb
-        btns.grid(row=14, column=0, columnspan=2, sticky="e", pady=(12, 0))
-        pixel_button(btns, "SIGN OUT", self._sign_out, color=PANEL).pack(side="left")
-        self.err = tk.Label(btns, text="", bg=BG, fg=ERR, font=f)
-        self.err.pack(side="left", padx=8)
-        pixel_button(btns, "CANCEL", w.destroy, color=PANEL).pack(side="left")
-        pixel_button(btns, "SAVE", self._save).pack(side="left", padx=(6, 0))
-        w.update_idletasks()
-        sw, sh = w.winfo_screenwidth(), w.winfo_screenheight()
-        w.geometry(f"+{(sw - w.winfo_reqwidth()) // 2}+{max(0, (sh - w.winfo_reqheight()) // 2)}")
-        w.after(300, lambda: platform_win.exclude_from_capture(w))
+    def _build_updates(self, page, cfg):
+        from . import __version__
+        self._title(page, "Updates", f"You have Teto {__version__}. Only changed files are downloaded -\n"
+                                      "Python and Claude Code are never re-downloaded.")
+        self.v_auto = tk.BooleanVar(value=cfg.auto_update)
+        card = self._card(page)
+        self._toggle(card, "Update by herself when idle", self.v_auto)
+        self.repo = self._field_row(card, "GitHub repository", lambda p: self._entry(p))
+        self.repo.insert(0, cfg.update_repo)
+        row = tk.Frame(page, bg=C_BG)
+        row.pack(fill="x")
+        PillButton(row, "Check now", self._check_now, self.fs, True, k=self.k).pack(side="left")
+        PillButton(row, "From zip...", self._from_zip, self.fs, False, k=self.k).pack(side="left", padx=8)
 
+    # ------------------------------------------------------------ actions
     def _check_now(self):
         self.app.config.update_repo = self.repo.get().strip()
         self.app.config.save()
         self.app.check_updates(manual=True)
-        self.err.config(text="Checking... see the chat window", fg=DIM)
+        self.err.config(text="Checking... see the chat window", fg=C_MUTED)
 
     def _from_zip(self):
         from tkinter import filedialog
@@ -744,24 +916,24 @@ class SettingsWindow:
                                           filetypes=[("Zip files", "*.zip")])
         if path:
             self.app.check_updates(manual=True, zip_path=path)
-            self.err.config(text="Reading the zip... see the chat window", fg=DIM)
+            self.err.config(text="Reading the zip... see the chat window", fg=C_MUTED)
 
     def _sign_out(self):
         self.app.sign_out()
-        self.err.config(text="Signed out of Claude", fg=DIM)
+        self.err.config(text="Signed out of Claude", fg=C_MUTED)
 
     def _refresh_routines(self):
         self.rlist.delete(0, "end")
         for r in self.routines:
-            self.rlist.insert("end", f"{r.get('time', '??:??')}  {r.get('task', '')}")
+            self.rlist.insert("end", f"  {r.get('time', '??:??')}   {r.get('task', '')}")
 
     def _add_routine(self):
         t, task = self.r_time.get().strip(), self.r_task.get().strip()
         if not re.fullmatch(r"([01]?\d|2[0-3]):[0-5]\d", t):
-            self.err.config(text="Time must be HH:MM (24h)")
+            self.err.config(text="Time must be HH:MM (24h)", fg=C_ERR)
             return
         if not task:
-            self.err.config(text="Type what Teto should do")
+            self.err.config(text="Type what Teto should do", fg=C_ERR)
             return
         h, m = t.split(":")
         self.routines.append({"time": f"{int(h):02d}:{m}", "task": task, "enabled": True, "last_run": ""})
@@ -778,7 +950,7 @@ class SettingsWindow:
     def _connect_edge(self):
         from tkinter import messagebox
         text = self.app.connect_edge()
-        messagebox.showinfo("Connect my Edge", text, parent=self.win if hasattr(self, "win") else None)
+        messagebox.showinfo("Connect my Edge", text, parent=self.win)
 
     def _save(self):
         cfg = self.app.config
@@ -787,15 +959,17 @@ class SettingsWindow:
             monitor = int(self.monitor.get())
             scale = int(self.scale.get())
         except ValueError:
-            self.err.config(text="Numbers only, please")
+            self.err.config(text="Numbers only, please", fg=C_ERR)
             return
         model = self.model.get().strip()
         if not model:
-            self.err.config(text="Choose a model")
+            self.show_page("brain")
+            self.err.config(text="Choose a model", fg=C_ERR)
             return
         brain = next((k for k, v in BRAINS.items() if v == self.brain.get()), "subscription")
         if brain == "api" and not (self.key.get().strip() or os.environ.get("ANTHROPIC_API_KEY")):
-            self.err.config(text="Paste an API key, or use the Claude subscription brain")
+            self.show_page("brain")
+            self.err.config(text="Paste an API key, or use the Claude subscription brain", fg=C_ERR)
             return
         old_scale = cfg.pet_scale
         cfg.brain = brain
