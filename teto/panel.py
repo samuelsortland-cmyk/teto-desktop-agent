@@ -1132,7 +1132,7 @@ class TetoMenu:
         self.close()
         if it["kind"] == "toggle":
             it["var"].set(not it["var"].get())
-        self.root.after(1, it["command"])
+        self.root.after_idle(it["command"])
 
     def _item(self, c, n, it, x0, y0, x1, y1):
         tag = f"item{n}"
