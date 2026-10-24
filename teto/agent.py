@@ -126,7 +126,7 @@ CLIENT_TOOLS = [
 class AgentSettings:
     model: str = "claude-opus-5-5"
     effort: str = "medium"
-    max_steps: int = 80
+    max_steps: int = 0                  # 0 = unlimited
     confirm_shell: bool = True
     api_key: str = ""
     work_style: str = "foreground"   # background: don't take over the user's mouse/keyboard
@@ -295,7 +295,7 @@ class Agent:
         while True:
             if self.stop_event.is_set():
                 raise UserAbort()
-            if steps >= self.settings.max_steps:
+            if self.settings.max_steps and steps >= self.settings.max_steps:
                 self.ui.log("system", f"Reached the step limit ({self.settings.max_steps}). "
                                       "Say 'continue' to keep going.")
                 self.ui.status("error")

@@ -30,7 +30,7 @@ class Config:
     model: str = "default"            # default | opus | sonnet | haiku | a full model id
     effort: str = "medium"            # low | medium | high | xhigh | max (when speed == "custom")
     speed: str = "fast"               # fast | balanced | max | custom - trades thinking time vs. depth
-    max_steps: int = 80               # model turns per task before Teto stops
+    max_steps: int = 0                # 0 = no step limit (Teto keeps going until the task is done)
     monitor: int = 1                  # mss monitor index (1 = primary)
     screenshot_max_long_edge: int = 1568
     confirm_shell: bool = True        # ask before running shell commands
@@ -87,7 +87,7 @@ class Config:
             self.effort = "medium"
         if self.speed not in ("fast", "balanced", "max", "custom"):
             self.speed = "fast"
-        self.max_steps = max(1, min(int(self.max_steps or 80), 500))
+        self.max_steps = 0                # step limits are gone: she works until the job is done
         self.pet_scale = max(2, min(int(self.pet_scale or 6), 10))
         self.screenshot_max_long_edge = max(640, min(int(self.screenshot_max_long_edge or 1568), 2560))
         self.monitor = max(1, int(self.monitor or 1))

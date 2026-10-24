@@ -61,7 +61,7 @@ def test_config_roundtrip_and_sanitize(tmp_path, monkeypatch):
     c.routines = [{"time": "09:00", "task": "check mail", "enabled": True, "last_run": ""}]
     c.save()
     data = json.loads((tmp_path / "config.json").read_text())
-    assert data["effort"] == "medium" and data["max_steps"] == 500
+    assert data["effort"] == "medium" and data["max_steps"] == 0
     c2 = config_mod.Config.load()
     assert c2.routines[0]["task"] == "check mail"
 

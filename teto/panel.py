@@ -21,6 +21,7 @@ TEXT = "#fff1f4"
 DIM = "#b9a3ad"
 ERR = "#ff6b6b"
 OK = "#8fe3a1"
+OK_D = "#2e9e5b"
 
 MODELS = ["default", "opus", "sonnet", "haiku", "claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1"]
 WORK_STYLES = {"background": "Background - don't use my mouse/keyboard (recommended)",
@@ -64,153 +65,344 @@ def pixel_button(parent, text, command, color=RED, fg=TEXT, width=None):
     return b
 
 
+# Chat window palette (light, Teto-red accents)
+C_BG = "#ffffff"
+C_SOFT = "#fbf6f8"
+C_BOT = "#f4eef1"
+C_SHADOW = "#ece2e7"
+C_LINE = "#efe4e9"
+C_INK = "#2a1822"
+C_MUTED = "#9b8a93"
+C_ACT = "#6f7fa8"
+C_ERR_BG = "#ffe6ea"
+C_ERR = "#b3263f"
+C_FIELD = "#f3eef1"
+
+
+def _ui_family(root) -> str:
+    from tkinter import font as tkfont
+    have = set(tkfont.families(root))
+    for fam in ("Segoe UI", "Inter", "Helvetica Neue", "DejaVu Sans", "Arial"):
+        if fam in have:
+            return fam
+    return "TkDefaultFont"
+
+
+def _round_rect(c, x0, y0, x1, y1, r, **kw):
+    r = max(1, min(r, (x1 - x0) / 2, (y1 - y0) / 2))
+    pts = [x0 + r, y0, x1 - r, y0, x1, y0, x1, y0 + r, x1, y1 - r, x1, y1, x1 - r, y1, x0 + r, y1,
+           x0, y1, x0, y1 - r, x0, y0 + r, x0, y0]
+    return c.create_polygon(pts, smooth=True, splinesteps=24, **kw)
+
+
 class Panel:
+    """The chat window: header, conversation, quick replies and the message field."""
+
+    MAX_MESSAGES = 400
+
     def __init__(self, root: tk.Tk, app, font):
         self.root = root
         self.app = app
         fam = font[0]
-        self.font = (fam, 10)
-        self.font_b = (fam, 10, "bold")
-        self.font_h = (fam, 12, "bold")
+        self.k = max(1.0, root.winfo_fpixels("1i") / 96.0)   # high-DPI displays
+        ui = _ui_family(root)
+        self.font = (ui, 10)
+        self.font_b = (ui, 10, "bold")
+        self.font_s = (ui, 8)
+        self.font_msg = (ui, 10)
+        self.font_name = (fam, 13, "bold")
 
         w = self.win = tk.Toplevel(root)
         w.title("Teto - Desktop Agent")
-        w.configure(bg=BG)
-        self.k = max(1.0, root.winfo_fpixels("1i") / 96.0)   # high-DPI displays
-        self.pw, self.ph = int(440 * self.k), int(600 * self.k)
+        w.configure(bg=C_BG)
+        self.pw, self.ph = int(400 * self.k), int(620 * self.k)
         w.geometry(f"{self.pw}x{self.ph}")
-        w.minsize(int(360 * self.k), int(420 * self.k))
+        w.minsize(int(330 * self.k), int(420 * self.k))
         w.protocol("WM_DELETE_WINDOW", self.hide)
         w.attributes("-topmost", True)
         w._font_b = self.font_b
         w.bind("<Escape>", lambda e: self.app.stop_all())
-
-        # header - a little Teto face, her name, and a status lamp
-        head = tk.Frame(w, bg=RED)
-        head.pack(fill="x")
-        head._font_b = self.font_b
-        self._face = _teto_face_icon(root, max(28, int(34 * self.k)))
-        if self._face is not None:
-            tk.Label(head, image=self._face, bg=RED, bd=0).pack(side="left", padx=(8, 4), pady=4)
-        titles = tk.Frame(head, bg=RED)
-        titles.pack(side="left", pady=4)
-        tk.Label(titles, text="Teto", bg=RED, fg=TEXT, font=(fam, 13, "bold")).pack(anchor="w")
-        tk.Label(titles, text="your desktop buddy ♪", bg=RED, fg="#ffd6de",
-                 font=(fam, 8)).pack(anchor="w")
-        self.status_lbl = tk.Label(head, text="● idle", bg=RED, fg=TEXT, font=self.font_b, padx=10)
-        self.status_lbl.pack(side="right")
-        self._scallop(w)
-
-        # toolbar
-        bar = tk.Frame(w, bg=BG2, pady=6, padx=6)
-        bar.pack(fill="x")
-        bar._font_b = self.font_b
-        self.stop_btn = pixel_button(bar, "■ STOP", self.app.stop_all, color="#c0392b")
-        self.stop_btn.pack(side="left")
-        pixel_button(bar, "NEW CHAT", self.app.new_chat, color=PANEL).pack(side="left", padx=6)
-        pixel_button(bar, "SETTINGS", self.app.open_settings, color=PANEL).pack(side="left")
-        self.queue_lbl = tk.Label(bar, text="", bg=BG2, fg=DIM, font=self.font)
-        self.queue_lbl.pack(side="right")
-
-        # "Sign in with Claude" banner (shown only when the subscription brain isn't signed in)
-        self.signin = tk.Frame(w, bg=PINK, padx=8, pady=8)
-        self.signin._font_b = self.font_b
-        self.signin_lbl = tk.Label(self.signin, text="", bg=PINK, fg="#1a0e15", font=self.font_b,
-                                   justify="left", anchor="w", wraplength=int(250 * self.k))
-        self.signin_lbl.pack(side="left", fill="x", expand=True)
-        self.signin_btn = pixel_button(self.signin, "SIGN IN WITH CLAUDE", self.app.sign_in, color=RED_D)
-        self.signin_btn.pack(side="right")
-        self._signin_anchor = bar
-
-        self.update_bar = tk.Frame(w, bg="#ffd98a", padx=8, pady=6)
-        self.update_bar._font_b = self.font_b
-        self.update_lbl = tk.Label(self.update_bar, text="", bg="#ffd98a", fg="#1a0e15", font=self.font_b,
-                                   anchor="w")
-        self.update_lbl.pack(side="left", fill="x", expand=True)
-        pixel_button(self.update_bar, "UPDATE", self.app.install_update, color=RED_D).pack(side="right")
-
-        self.link_bar = tk.Frame(w, bg="#a8f0d8", padx=8, pady=6)
-        self.link_bar._font_b = self.font_b
-        tk.Label(self.link_bar, text="Let me work in tabs you're NOT on\n(one-time, 30-sec setup)", bg="#a8f0d8",
-                 fg="#1a0e15", font=self.font_b, anchor="w", justify="left").pack(side="left", fill="x", expand=True)
-        pixel_button(self.link_bar, "CONNECT EDGE", self.app.connect_edge_ui, color=RED_D).pack(side="right")
-
-        # log
-        body = self.body = tk.Frame(w, bg=BG, padx=6, pady=6)
-        self.log_txt = tk.Text(body, height=10, bg=BG, fg=TEXT, font=self.font, wrap="word", bd=0,
-                               highlightthickness=2, highlightbackground=PANEL, padx=8, pady=8,
-                               state="disabled", cursor="arrow", spacing1=2, spacing3=4)
-        sb = tk.Scrollbar(body, command=self.log_txt.yview, bg=PANEL, troughcolor=BG, bd=0)
-        self.log_txt.configure(yscrollcommand=sb.set)
-        sb.pack(side="right", fill="y")
-        self.log_txt.pack(side="left", fill="both", expand=True)
-        t = self.log_txt
-        t.tag_config("user", foreground="#ffe08a", font=self.font_b, lmargin1=40, lmargin2=40)
-        t.tag_config("teto", foreground=PINK, font=self.font_b)
-        t.tag_config("thought", foreground=DIM, lmargin1=14, lmargin2=14)
-        t.tag_config("action", foreground="#9fc3ff", lmargin1=14, lmargin2=14)
-        t.tag_config("error", foreground=ERR)
-        t.tag_config("system", foreground=GREY)
-        t.tag_config("ask", foreground="#1a0e15", background=PINK, font=self.font_b)
-
-        # question / confirmation area (hidden until needed)
-        self.ask_frame = tk.Frame(w, bg=PANEL, padx=8, pady=8)
-        self.ask_frame._font_b = self.font_b
-        self.ask_lbl = tk.Label(self.ask_frame, text="", bg=PANEL, fg=TEXT, font=self.font_b,
-                                justify="left", anchor="w", wraplength=380)
-        self.ask_lbl.pack(fill="x")
-        self.ask_btns = tk.Frame(self.ask_frame, bg=PANEL)
-        self.ask_btns._font_b = self.font_b
-        self.ask_btns.pack(fill="x", pady=(6, 0))
-        self._pending = None          # (kind, callback)
-
-        # input
-        inp = tk.Frame(w, bg=BG2, padx=6, pady=6)
-        inp.pack(fill="x", side="bottom")
-        inp._font_b = self.font_b
-        self.entry = tk.Text(inp, height=3, bg="#1a0e15", fg=TEXT, insertbackground=PINK, font=self.font,
-                             bd=0, highlightthickness=2, highlightbackground=RED_D, highlightcolor=RED,
-                             wrap="word", padx=6, pady=6)
-        pixel_button(inp, "SEND ►", self._submit).pack(side="right", padx=(6, 0), fill="y")
-        self.entry.pack(side="left", fill="x", expand=True)
-        self.entry.bind("<Return>", self._on_enter)
-        self.opts = tk.Frame(w, bg=BG2, padx=6)
-        self.opts.pack(fill="x", side="bottom")
         self.shell_var = tk.BooleanVar(value=self.app.config.confirm_shell)
-        tk.Checkbutton(self.opts, text="Ask before shell commands", variable=self.shell_var,
-                       command=self._toggle_shell, bg=BG2, fg=DIM, selectcolor=BG, activebackground=BG2,
-                       activeforeground=TEXT, font=self.font, bd=0).pack(side="left")
-        tk.Label(self.opts, text="Stop: Esc · Ctrl+Alt+Q", bg=BG2, fg=GREY,
-                 font=(self.font[0], 8)).pack(side="right")
-        # packed last so the log shrinks first and the input never gets squeezed off-screen
-        body.pack(fill="both", expand=True)
+
+        self._scallop(w)
+        self._build_header(w)
+
+        # banners (sign in / update / Teto Link) slot in under the header
+        self.signin = self._banner(w, "#ffe3e9")
+        self.signin_lbl = tk.Label(self.signin, text="", bg="#ffe3e9", fg=C_INK, font=self.font_b,
+                                   justify="left", anchor="w", wraplength=int(230 * self.k))
+        self.signin_lbl.pack(side="left", fill="x", expand=True)
+        self.signin_btn = self._pill_button(self.signin, "SIGN IN WITH CLAUDE", self.app.sign_in)
+        self.signin_btn.pack(side="right")
+
+        self.update_bar = self._banner(w, "#fff3d1")
+        self.update_lbl = tk.Label(self.update_bar, text="", bg="#fff3d1", fg=C_INK, font=self.font_b, anchor="w")
+        self.update_lbl.pack(side="left", fill="x", expand=True)
+        self._pill_button(self.update_bar, "UPDATE", self.app.install_update).pack(side="right")
+
+        self.link_bar = self._banner(w, "#dcf6ec")
+        tk.Label(self.link_bar, text="Let me work in tabs you're NOT on\n(one-time, 30-sec setup)", bg="#dcf6ec",
+                 fg=C_INK, font=self.font_b, anchor="w", justify="left").pack(side="left", fill="x", expand=True)
+        self._pill_button(self.link_bar, "CONNECT EDGE", self.app.connect_edge_ui).pack(side="right")
+
+        self._build_input(w)
+        self._build_chat(w)
+
+        self._messages: list[tuple[str, str]] = []
+        self._replies: list[tuple[str, object, bool]] = []
+        self._pending = None          # (kind, callback)
+        self._y = 0
+        self._width = 0
 
         self._place_default()
         self.visible = True
         self.win.after(300, lambda: platform_win.exclude_from_capture(self.win))
         self.log("teto", "Hiii~ I'm Teto! Tell me what to do on your PC and I'll handle it. ♪")
-        self.log("system", "Try: \"open Notepad and write a haiku about bread\"")
+        self.log("system", 'Try: "open Notepad and write a haiku about bread"')
         self.entry.focus_set()
 
+    # ------------------------------------------------------------ building
     def _scallop(self, parent):
-        """A decorative pixel-scallop divider with little drills and notes."""
-        h = int(10 * self.k)
-        c = tk.Canvas(parent, height=h, bg=RED, highlightthickness=0, bd=0)
+        """Teto-red top edge with a little scalloped trim."""
+        h = int(9 * self.k)
+        c = tk.Canvas(parent, height=h, bg=C_BG, highlightthickness=0, bd=0)
         c.pack(fill="x")
 
         def redraw(_e=None):
             c.delete("all")
-            w = c.winfo_width() or self.pw
-            step = int(10 * self.k)
-            for x in range(0, w + step, step):          # scalloped bottom edge
-                c.create_oval(x - step // 2, -h, x + step // 2, h, fill=RED_D, outline="")
-            for i, x in enumerate(range(step, w, step * 4)):   # drill-pink dots + notes
-                col = PINK if i % 2 else "#ffd6de"
-                c.create_rectangle(x, h // 2 - 1, x + 2, h // 2 + 1, fill=col, outline="")
+            width = c.winfo_width() or self.pw
+            c.create_rectangle(0, 0, width, h // 2, fill=RED, outline="")
+            step = int(12 * self.k)
+            for x in range(0, width + step, step):
+                c.create_oval(x - step // 2, -h // 2, x + step // 2, h, fill=RED, outline="")
         c.bind("<Configure>", redraw)
-        self.root.after(60, redraw)
 
-    # ------------------------------------------------------------- window
+    def _build_header(self, w):
+        head = tk.Frame(w, bg=C_BG, padx=12, pady=8)
+        head.pack(fill="x")
+        self._face = _teto_face_icon(self.root, max(28, int(34 * self.k)))
+        if self._face is not None:
+            tk.Label(head, image=self._face, bg=C_BG, bd=0).pack(side="left", padx=(0, 8))
+        names = tk.Frame(head, bg=C_BG)
+        names.pack(side="left")
+        tk.Label(names, text="Teto", bg=C_BG, fg=C_INK, font=self.font_name).pack(anchor="w")
+        self.status_lbl = tk.Label(names, text="● Online", bg=C_BG, fg=OK_D, font=self.font_s)
+        self.status_lbl.pack(anchor="w")
+
+        def icon(text, cmd, tip_color=C_MUTED, size=13):
+            lbl = tk.Label(head, text=text, bg=C_BG, fg=tip_color, font=(self.font[0], size), cursor="hand2",
+                           padx=5)
+            lbl.bind("<Button-1>", lambda e: cmd())
+            lbl.bind("<Enter>", lambda e: lbl.config(fg=RED))
+            lbl.bind("<Leave>", lambda e: lbl.config(fg=tip_color))
+            return lbl
+
+        icon("✕", self.hide).pack(side="right")
+        icon("↻", self.app.new_chat).pack(side="right")
+        icon("⚙", self.app.open_settings, size=12).pack(side="right")
+        self.stop_btn = icon("■", self.app.stop_all, tip_color=RED, size=12)
+        self.queue_lbl = tk.Label(head, text="", bg=C_BG, fg=C_MUTED, font=self.font_s)
+        self.queue_lbl.pack(side="right", padx=4)
+        self._signin_anchor = tk.Frame(w, bg=C_LINE, height=1)
+        self._signin_anchor.pack(fill="x")
+
+    def _banner(self, parent, color):
+        f = tk.Frame(parent, bg=color, padx=12, pady=8)
+        f._font_b = self.font_b
+        return f
+
+    def _pill_button(self, parent, text, command, filled=True):
+        b = tk.Button(parent, text=text, command=command, relief="flat", bd=0, cursor="hand2",
+                      bg=RED if filled else C_BG, fg="white" if filled else RED, font=self.font_b,
+                      activebackground=RED_D, activeforeground="white", padx=12, pady=4,
+                      highlightthickness=0)
+        return b
+
+    def _build_chat(self, w):
+        body = self.body = tk.Frame(w, bg=C_BG)
+        body.pack(fill="both", expand=True)
+        self.chat = tk.Canvas(body, bg=C_BG, highlightthickness=0, bd=0)
+        self.thumb = tk.Canvas(body, width=int(8 * self.k), bg=C_BG, highlightthickness=0, bd=0)
+        self.thumb.pack(side="right", fill="y", padx=(0, 3), pady=6)
+        self.chat.pack(side="left", fill="both", expand=True)
+        self.chat.configure(yscrollcommand=self._on_scroll)
+        self.chat.bind("<Configure>", self._on_resize)
+        for widget in (self.chat, self.thumb):
+            widget.bind("<MouseWheel>", lambda e: self.chat.yview_scroll(int(-e.delta / 120) or
+                                                                         (-1 if e.delta > 0 else 1), "units"))
+            widget.bind("<Button-4>", lambda e: self.chat.yview_scroll(-2, "units"))
+            widget.bind("<Button-5>", lambda e: self.chat.yview_scroll(2, "units"))
+        self.thumb.bind("<B1-Motion>", self._drag_thumb)
+        self.thumb.bind("<Button-1>", self._drag_thumb)
+        self._scroll = (0.0, 1.0)
+
+    def _build_input(self, w):
+        bottom = tk.Frame(w, bg=C_BG, padx=12, pady=8)
+        bottom.pack(fill="x", side="bottom")
+        self.field = tk.Canvas(bottom, height=int(46 * self.k), bg=C_BG, highlightthickness=0, bd=0)
+        self.field.pack(fill="x")
+        self.entry = tk.Text(self.field, height=2, bg=C_FIELD, fg=C_INK, insertbackground=RED, font=self.font_msg,
+                             bd=0, highlightthickness=0, wrap="word", padx=2, pady=2)
+        self._entry_win = self.field.create_window(0, 0, window=self.entry, anchor="nw")
+        self.entry.bind("<Return>", self._on_enter)
+        self.entry.bind("<FocusIn>", lambda e: self._placeholder(False))
+        self.entry.bind("<FocusOut>", lambda e: self._placeholder(True))
+        self.field.bind("<Configure>", self._draw_field)
+        self.field.tag_bind("send", "<Button-1>", lambda e: self._submit())
+        self.field.tag_bind("send", "<Enter>", lambda e: self.field.itemconfig("sendfill", fill=RED_D))
+        self.field.tag_bind("send", "<Leave>", lambda e: self.field.itemconfig("sendfill", fill=RED))
+        tk.Label(bottom, text="Enter to send · Shift+Enter new line · Esc stops", bg=C_BG, fg=C_MUTED,
+                 font=self.font_s).pack(anchor="w", pady=(4, 0))
+        self._ph = False
+
+    def _draw_field(self, _e=None):
+        c = self.field
+        c.delete("bg", "send")
+        wid, h = c.winfo_width(), c.winfo_height()
+        _round_rect(c, 1, 1, wid - 1, h - 1, h // 2, fill=C_FIELD, outline=C_LINE, tags="bg")
+        c.tag_lower("bg")
+        r = h // 2 - int(6 * self.k)
+        cx, cy = wid - h // 2, h // 2
+        c.create_oval(cx - r, cy - r, cx + r, cy + r, fill=RED, outline="", tags=("send", "sendfill"))
+        s = r * 0.55                                   # a little paper plane
+        c.create_polygon(cx - s, cy - s * 0.8, cx + s, cy, cx - s, cy + s * 0.8, cx - s * 0.45, cy,
+                         fill="white", outline="", tags="send")
+        c.coords(self._entry_win, h // 2 - 4, int(6 * self.k))
+        c.itemconfigure(self._entry_win, width=max(40, wid - h - h // 2), height=h - int(12 * self.k))
+
+    def _placeholder(self, show: bool):
+        if show and not self.entry.get("1.0", "end").strip():
+            self.entry.insert("1.0", "Message Teto...")
+            self.entry.config(fg=C_MUTED)
+            self._ph = True
+        elif not show and self._ph:
+            self.entry.delete("1.0", "end")
+            self.entry.config(fg=C_INK)
+            self._ph = False
+
+    # ------------------------------------------------------------ scrolling
+    def _on_scroll(self, first, last):
+        self._scroll = (float(first), float(last))
+        t = self.thumb
+        t.delete("all")
+        if self._scroll[1] - self._scroll[0] >= 0.999:
+            return
+        h = t.winfo_height()
+        wid = t.winfo_width()
+        y0, y1 = h * self._scroll[0], max(h * self._scroll[0] + 24, h * self._scroll[1])
+        _round_rect(t, 1, y0, wid - 1, y1, wid // 2, fill="#d9cbd2", outline="")
+
+    def _drag_thumb(self, e):
+        h = max(1, self.thumb.winfo_height())
+        span = self._scroll[1] - self._scroll[0]
+        self.chat.yview_moveto(max(0.0, min(1.0, e.y / h - span / 2)))
+
+    def _near_bottom(self) -> bool:
+        return self._scroll[1] >= 0.98
+
+    def _scroll_end(self):
+        self.chat.update_idletasks()
+        self.chat.configure(scrollregion=(0, 0, self._width, self._y + 12))
+        self.chat.yview_moveto(1.0)
+
+    # ------------------------------------------------------------ drawing
+    def _on_resize(self, e):
+        if abs(e.width - self._width) > 2:
+            self._width = e.width
+            self._redraw()
+
+    def _redraw(self):
+        c = self.chat
+        c.delete("all")
+        self._y = 8
+        self._draw_header_divider()
+        for kind, text in self._messages:
+            self._draw(kind, text)
+        self._draw_replies()
+        self._scroll_end()
+
+    def _draw_header_divider(self):
+        import datetime as _dt
+        c, wid = self.chat, self._width or self.pw
+        label = _dt.datetime.now().strftime("%B %d, %Y").replace(" 0", " ")
+        t = c.create_text(wid // 2, self._y + 10, text=label, fill=C_MUTED, font=self.font_s)
+        x0, _, x1, _ = c.bbox(t)
+        c.create_line(16, self._y + 10, x0 - 10, self._y + 10, fill=C_LINE)
+        c.create_line(x1 + 10, self._y + 10, wid - 16, self._y + 10, fill=C_LINE)
+        c.create_text(16, self._y + 28, text="Teto is online", anchor="w", fill=C_MUTED, font=self.font_s)
+        self._y += 44
+
+    def _draw(self, kind: str, text: str):
+        c = self.chat
+        wid = self._width or self.pw
+        maxw = int(wid * 0.74)
+        pad_x, pad_y, gap = int(13 * self.k), int(9 * self.k), int(8 * self.k)
+        if kind in ("action", "thought", "system"):
+            color = {"action": C_ACT, "thought": C_MUTED, "system": C_MUTED}[kind]
+            font = (self.font[0], 8, "italic") if kind == "thought" else self.font_s
+            prefix = {"action": "›  ", "thought": "", "system": ""}[kind]
+            if kind == "system":
+                item = c.create_text(wid // 2, self._y, text=text, fill=color, font=font, width=wid - 60,
+                                     anchor="n", justify="center")
+            else:
+                item = c.create_text(22, self._y, text=prefix + text, fill=color, font=font, width=wid - 50,
+                                     anchor="nw")
+            self._y = c.bbox(item)[3] + 6
+            return
+        right = kind == "user"
+        fill, ink = {"user": (RED, "white"), "error": (C_ERR_BG, C_ERR), "ask": (C_BOT, C_INK)}.get(kind, (C_BOT, C_INK))
+        font = self.font_b if kind == "ask" else self.font_msg
+        item = c.create_text(0, self._y + pad_y, text=text, fill=ink, font=font, width=maxw - 2 * pad_x,
+                             anchor="nw")
+        x0, y0, x1, y1 = c.bbox(item)
+        tw = x1 - x0
+        left = wid - 18 - tw - 2 * pad_x if right else 16
+        c.move(item, left + pad_x - x0, 0)
+        bx0, bx1, by1 = left, left + tw + 2 * pad_x, y1 + pad_y
+        if not right:
+            _round_rect(c, bx0, self._y + 2, bx1, by1 + 2, 16, fill=C_SHADOW, outline="")
+        _round_rect(c, bx0, self._y, bx1, by1, 16, fill=fill, outline="")
+        c.tag_raise(item)
+        self._y = by1 + gap
+
+    def _draw_replies(self):
+        if not self._replies:
+            return
+        c = self.chat
+        wid = self._width or self.pw
+        h = int(32 * self.k)
+        pills = []
+        for i, (label, cb, filled) in enumerate(self._replies):
+            t = c.create_text(0, 0, text=label, font=self.font_b, anchor="nw")
+            x0, y0, x1, y1 = c.bbox(t)
+            c.delete(t)
+            pills.append((label, cb, filled, (x1 - x0) + int(30 * self.k)))
+        rows, row, used = [], [], 0                      # wrap pills into right-aligned rows
+        for p in pills:
+            if row and used + p[3] + 8 > wid - 40:
+                rows.append(row)
+                row, used = [], 0
+            row.append(p)
+            used += p[3] + 8
+        if row:
+            rows.append(row)
+        for row in rows:
+            x = wid - 18 - sum(p[3] + 8 for p in row) + 8
+            for n, (label, cb, filled, pw) in enumerate(row):
+                tag = f"reply{id(cb)}_{n}_{label}"
+                bg = _round_rect(c, x, self._y, x + pw, self._y + h, h // 2, fill=RED if filled else C_BG,
+                                 outline=RED, width=2, tags=(tag, "replies"))
+                c.create_text(x + pw / 2, self._y + h / 2, text=label, fill="white" if filled else RED,
+                              font=self.font_b, tags=(tag, "replies"))
+                c.tag_bind(tag, "<Button-1>", lambda e, cb=cb: cb())
+                c.tag_bind(tag, "<Enter>", lambda e, bg=bg, f=filled: (c.itemconfig(bg, fill=RED_D if f else "#ffe9ee"),
+                                                                    c.configure(cursor="hand2")))
+                c.tag_bind(tag, "<Leave>", lambda e, bg=bg, f=filled: (c.itemconfig(bg, fill=RED if f else C_BG),
+                                                                    c.configure(cursor="")))
+                x += pw + 8
+            self._y += h + 8
+
+    # ---------------------------------------------------------------- window
     def _place_default(self):
         """Bottom-right, but left of where the pet sits so they don't overlap."""
         self.win.update_idletasks()
@@ -252,25 +444,37 @@ class Panel:
         self.win.geometry(f"+{nx}+{max(0, y0 + 32)}")
         self.win.update_idletasks()
 
-    # ---------------------------------------------------------------- log
+    # ------------------------------------------------------------------ log
     def log(self, kind: str, text: str):
-        prefix = {"user": "", "teto": "Teto ♪ ", "thought": "· ", "action": "> ",
-                  "error": "! ", "system": "~ "}.get(kind, "")
-        t = self.log_txt
-        t.configure(state="normal")
-        t.insert("end", prefix + text.strip() + "\n", kind)
-        # keep the log from growing without bound
-        lines = int(t.index("end-1c").split(".")[0])
-        if lines > 2000:
-            t.delete("1.0", f"{lines - 1500}.0")
-        t.configure(state="disabled")
-        t.see("end")
+        text = (text or "").strip()
+        if not text:
+            return
+        if kind == "teto" and text.startswith("Teto ♪ "):
+            text = text[len("Teto ♪ "):]
+        self._messages.append((kind, text))
+        if len(self._messages) > self.MAX_MESSAGES:
+            self._messages = self._messages[-int(self.MAX_MESSAGES * 0.75):]
+            self._redraw()
+            return
+        follow = self._near_bottom()
+        if self._replies:                # keep quick replies under the newest message
+            self._redraw()
+            return
+        self._draw(kind, text)
+        self.chat.configure(scrollregion=(0, 0, self._width, self._y + 12))
+        if follow or kind == "user":
+            self.chat.yview_moveto(1.0)
 
     def set_status(self, state: str):
-        colors = {"idle": TEXT, "thinking": "#ffe08a", "working": "#9fc3ff", "talking": TEXT,
-                  "waiting": "#ffe08a", "success": OK, "error": "#ffd0d0"}
-        label = {"waiting": "needs you!", "talking": "working"}.get(state, state)
-        self.status_lbl.config(text=f"● {label}", fg=colors.get(state, TEXT))
+        busy = state in ("thinking", "working", "talking", "waiting")
+        label = {"idle": "Online", "thinking": "Thinking...", "working": "Working...", "talking": "Working...",
+                 "waiting": "Needs you!", "success": "Done ♪", "error": "Hit a snag"}.get(state, state)
+        color = {"idle": OK_D, "success": OK_D, "error": C_ERR, "waiting": "#c98a00"}.get(state, RED)
+        self.status_lbl.config(text=f"● {label}", fg=color)
+        if busy and not self.stop_btn.winfo_ismapped():
+            self.stop_btn.pack(side="right", before=self.queue_lbl)
+        elif not busy and self.stop_btn.winfo_ismapped():
+            self.stop_btn.pack_forget()
 
     def set_update(self, text: str | None):
         """Show 'update ready' with an UPDATE button, or hide it (None)."""
@@ -306,7 +510,7 @@ class Panel:
     def set_queue(self, n: int):
         self.queue_lbl.config(text=f"{n} queued" if n else "")
 
-    # -------------------------------------------------------------- input
+    # ---------------------------------------------------------------- input
     def _on_enter(self, e):
         if e.state & 0x0001:        # shift held -> newline
             return None
@@ -314,6 +518,8 @@ class Panel:
         return "break"
 
     def _submit(self):
+        if self._ph:
+            return
         text = self.entry.get("1.0", "end").strip()
         if not text:
             return
@@ -329,39 +535,35 @@ class Panel:
         self.app.config.save()
         self.app.apply_settings()
 
-    # ------------------------------------------------- questions / confirm
+    # --------------------------------------------------- questions / confirm
     def ask(self, question: str, choices: list[str], callback):
-        """Show a question; callback(answer) is called once with the answer."""
+        """Show a question with quick-reply buttons; callback(answer) is called once."""
         self._clear_pending()
         self._pending = ("ask", callback)
-        self.log("ask", f" ? {question} ")
-        self.ask_lbl.config(text=question)
-        for c in choices:
-            pixel_button(self.ask_btns, c, lambda c=c: self._answer(c), color=RED).pack(side="left", padx=(0, 6))
-        tk.Label(self.ask_btns, text="...or type your answer below", bg=PANEL, fg=DIM,
-                 font=self.font).pack(side="left")
-        self.ask_frame.pack(fill="x", before=self.body, side="bottom")
+        self.log("ask", question)
+        self._replies = [(c, (lambda c=c: self._answer(c)), i == 0) for i, c in enumerate(choices)]
+        self._redraw()
         self.show()
 
     def confirm(self, title: str, detail: str, callback):
         self._clear_pending()
         self._pending = ("confirm", callback)
-        self.log("ask", f" ? {title} ")
-        self.ask_lbl.config(text=f"{title}\n\n{detail[:600]}")
-        pixel_button(self.ask_btns, "ALLOW", lambda: self._resolve(True), color="#2e8b57").pack(side="left")
-        pixel_button(self.ask_btns, "DENY", lambda: self._resolve(False), color="#c0392b").pack(side="left", padx=6)
-        self.ask_frame.pack(fill="x", before=self.body, side="bottom")
+        self.log("ask", f"{title}\n\n{detail[:600]}")
+        self._replies = [("Allow", lambda: self._resolve(True), True), ("Deny", lambda: self._resolve(False), False)]
+        self._redraw()
         self.show()
 
     def _answer(self, text: str):
         if self._pending and self._pending[0] == "ask":
-            self.log("user", text)
             self._resolve(text)
+            self.log("user", text)
 
     def _resolve(self, value):
         pending = self._pending
         self._clear_pending()
         if pending:
+            if pending[0] == "confirm":
+                self.log("user", "Allow" if value else "Deny")
             pending[1](value)
 
     def cancel_pending(self):
@@ -373,9 +575,9 @@ class Panel:
 
     def _clear_pending(self):
         self._pending = None
-        for c in self.ask_btns.winfo_children():
-            c.destroy()
-        self.ask_frame.pack_forget()
+        if self._replies:
+            self._replies = []
+            self._redraw()
 
 
 class SettingsWindow:
@@ -411,9 +613,8 @@ class SettingsWindow:
         row("Speed", self.speed, 3)
         self.effort = ttk.Combobox(w, values=EFFORTS, state="readonly", width=30)
         self.effort.set(cfg.effort)
-        self.steps = tk.Spinbox(w, from_=5, to=500, width=8, **ent)
-        self.steps.delete(0, "end"); self.steps.insert(0, str(cfg.max_steps))
-        row("Max steps per task", self.steps, 4)
+        row("Steps per task", tk.Label(w, text="unlimited - she keeps going until it's done ♪", bg=BG,
+                                       fg=PINK, font=f), 4)
         self.shot = ttk.Combobox(w, values=["1280", "1366", "1568", "1920", "2560"], width=30)
         self.shot.set(str(cfg.screenshot_max_long_edge))
         row("Screenshot size (px)", self.shot, 5)
@@ -582,7 +783,6 @@ class SettingsWindow:
     def _save(self):
         cfg = self.app.config
         try:
-            steps = int(self.steps.get())
             shot = int(self.shot.get())
             monitor = int(self.monitor.get())
             scale = int(self.scale.get())
@@ -603,7 +803,6 @@ class SettingsWindow:
         cfg.model = model
         cfg.effort = self.effort.get()
         cfg.speed = next((k for k, v in SPEEDS.items() if v == self.speed.get()), "fast")
-        cfg.max_steps = steps
         cfg.screenshot_max_long_edge = shot
         cfg.monitor = monitor
         cfg.pet_scale = scale

@@ -344,7 +344,7 @@ class CliAgent:
             mcp_servers={SERVER: server},
             allowed_tools=[f"mcp__{SERVER}__{n}" for n in self.tool_specs],
             setting_sources=[],                         # ignore the user's CLAUDE.md etc.
-            max_turns=self.settings.max_steps,
+            max_turns=self.settings.max_steps or None,   # None = no limit
             max_buffer_size=64 * 1024 * 1024,           # screenshots are big
             cwd=os.path.expanduser("~"),
             stderr=lambda line: print(f"[claude] {line}", file=sys.stderr),
