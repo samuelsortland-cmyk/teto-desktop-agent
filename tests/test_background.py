@@ -323,3 +323,105 @@ def test_eagle_uses_fast_game_screenshot_size_and_restores():
     a.eagle = False
     a.run_task("normal", fresh=True)
     assert comp.max_long_edge == 1568 and inputs.fast is False  # restored for ordinary tasks
+
+
+# ------------------------------------------------------------------ V3
+def test_mirror_profile_copies_signins_and_skips_locks(tmp_path):
+    import json as _json
+    src, dest = tmp_path / "User Data", tmp_path / "copy"
+    prof = src / "Profile 1"
+    (prof / "Network").mkdir(parents=True)
+    (prof / "Local Storage" / "leveldb").mkdir(parents=True)
+    (src / "Local State").write_text(_json.dumps({"profile": {"last_used": "Profile 1"},
+                                                  "os_crypt": {"encrypted_key": "abc"}}))
+    (prof / "Network" / "Cookies").write_bytes(b"cookie-db")
+    (prof / "Login Data").write_bytes(b"logins")
+    (prof / "Preferences").write_text("{}")
+    (prof / "Local Storage" / "leveldb" / "000003.log").write_bytes(b"ls")
+    (prof / "Local Storage" / "leveldb" / "LOCK").write_bytes(b"")
+    (prof / "History").write_bytes(b"locked")
+    real_read = background.platform_win.read_shared
+    info = background.mirror_profile(str(src), str(dest),
+                                     read=lambda p: None if p.endswith("History") else real_read(p))
+    assert info["profile"] == "Profile 1" and info["cookies"]
+    assert (dest / "Default" / "Network" / "Cookies").read_bytes() == b"cookie-db"
+    assert (dest / "Default" / "Login Data").read_bytes() == b"logins"
+    assert (dest / "Default" / "Local Storage" / "leveldb" / "000003.log").exists()
+    assert not (dest / "Default" / "Local Storage" / "leveldb" / "LOCK").exists()
+    assert any(s.endswith("History") for s in info["skipped"])
+    ls = _json.loads((dest / "Local State").read_text())
+    assert ls["profile"]["last_used"] == "Default" and ls["os_crypt"]["encrypted_key"] == "abc"
+
+
+def test_open_falls_back_to_own_browser_when_edge_unreachable(monkeypatch):
+    b = background.BackgroundBrowser("/nonexistent", prefer_real=True)
+    calls = []
+
+    def boom():
+        calls.append("attach")
+        raise ActionError("no Edge here")
+
+    monkeypatch.setattr(b, "attach", boom)
+    monkeypatch.setattr(b, "_ensure", lambda: (_ for _ in ()).throw(ActionError("stop-after-fallback")))
+    with pytest.raises(ActionError, match="stop-after-fallback"):
+        b.open("example.com")
+    assert calls == ["attach"]                       # tried the user's Edge first
+    calls.clear()
+    with pytest.raises(ActionError, match="stop-after-fallback"):
+        b.open("example.com", own_browser=True)
+    assert calls == []                               # explicit own browser skips it
+
+
+def _free_port():
+    import socket
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
+@pytest.mark.skipif(not HAVE_BROWSER, reason="no Chromium available")
+def test_real_browser_is_default_and_every_action_returns_a_picture(tmp_path):
+    import subprocess
+    page = tmp_path / "shop.html"
+    page.write_text(PAGE)
+    prof = tmp_path / "profile"
+    tools = BackgroundTools(str(prof), settings=lambda: {
+        "browser_path": CHROMIUM, "prefer_real_browser": True, "auto_screenshots": True, "screenshot_px": 800})
+    b, _ = tools._b()
+    b.debug_port = _free_port()
+    try:
+        out = tools.run("browser_open", {"url": page.as_uri()})
+        assert b.attached                                         # drove a separate, debuggable browser
+        assert isinstance(out, list) and out[1]["type"] == "image"
+        assert "Opened in your Edge" in out[0]["text"] and "Teto Test Shop" in out[0]["text"]
+        snap = tools.run("browser_snapshot", {})
+        assert isinstance(snap, str)                              # read-only tools stay text-only
+    finally:
+        tools.shutdown()
+        subprocess.run(["pkill", "-f", f"--user-data-dir={prof}"], check=False)
+
+
+def test_autonomous_prompt_and_config():
+    from teto import agent as agent_mod, brain_cli
+    from teto.config import Config
+    for mod in (agent_mod, brain_cli):
+        auto = mod._system_prompt("background", True, autonomous=True)
+        manual = mod._system_prompt("background", True, autonomous=False)
+        assert "full permission" in auto and "Ask the user with ask_user before anything" not in auto
+        assert "Ask the user with ask_user before anything irreversible" in manual
+        assert "{ask}" not in auto and "{unclear}" not in manual
+    c = Config()
+    assert c.autonomous and c.prefer_real_browser and c.auto_screenshots
+    c.autonomous, c.prefer_real_browser = "false", "yes"
+    c._sanitize()
+    assert c.autonomous is False and c.prefer_real_browser is True
+
+
+def test_autonomous_takes_screen_without_asking():
+    a, ui, inputs, _ = _cli("background", [])
+    a.settings.autonomous = True
+    a._handle_tool("click", {"x": 3, "y": 4})
+    assert ("click", 3, 4, "left", 1) in inputs.calls and ui.asked == []   # full permission: no prompt
+    a.shutdown()

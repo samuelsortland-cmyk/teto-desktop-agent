@@ -430,10 +430,17 @@ class SettingsWindow:
         self.style = ttk.Combobox(side, values=list(WORK_STYLES.values()), state="readonly", width=40)
         self.style.set(WORK_STYLES.get(cfg.work_style, WORK_STYLES["background"]))
         self.style.pack(anchor="w", pady=(2, 2))
+        self.v_auton = tk.BooleanVar(value=cfg.autonomous)
+        self.v_real = tk.BooleanVar(value=cfg.prefer_real_browser)
+        self.v_see = tk.BooleanVar(value=cfg.auto_screenshots)
         self.v_showb = tk.BooleanVar(value=cfg.show_browser)
-        tk.Checkbutton(side, text="Show Teto's browser window", variable=self.v_showb, **chk).pack(anchor="w")
-        tk.Label(side, text="Background: Teto works in her own invisible browser and talks to\n"
-                            "apps directly, so you can keep using your PC.", bg=BG, fg=GREY,
+        for text, var in (("Full permission - just do it, never ask", self.v_auton),
+                          ("Work in my signed-in Edge", self.v_real),
+                          ("See the page after every action", self.v_see),
+                          ("Show Teto's browser window", self.v_showb)):
+            tk.Checkbutton(side, text=text, variable=var, **chk).pack(anchor="w")
+        tk.Label(side, text="Background: Teto works in background tabs of your Edge (with your\n"
+                            "logins) and talks to apps directly, so you can keep using your PC.", bg=BG, fg=GREY,
                  font=(fam, 8), justify="left").pack(anchor="w", pady=(0, 12))
         tk.Label(side, text="Personality", bg=BG, fg=PINK, font=fb).pack(anchor="w")
         self.v_windows = tk.BooleanVar(value=cfg.stand_on_windows)
@@ -579,6 +586,9 @@ class SettingsWindow:
         cfg.wander = bool(self.v_wander.get())
         cfg.work_style = next((k for k, v in WORK_STYLES.items() if v == self.style.get()), "background")
         cfg.show_browser = bool(self.v_showb.get())
+        cfg.autonomous = bool(self.v_auton.get())
+        cfg.prefer_real_browser = bool(self.v_real.get())
+        cfg.auto_screenshots = bool(self.v_see.get())
         cfg.stand_on_windows = bool(self.v_windows.get())
         cfg.reminders = bool(self.v_remind.get())
         cfg.human_typing = bool(self.v_human.get())

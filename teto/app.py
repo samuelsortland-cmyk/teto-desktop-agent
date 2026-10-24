@@ -145,7 +145,10 @@ class App:
             profile_dir=os.path.join(app_dir(), "browser-profile"),
             settings=lambda: {"show_browser": self.config.show_browser, "browser_path": self.config.browser_path,
                               "human_typing": self.config.human_typing, "typing_wpm": self.config.typing_wpm,
-                              "typos": self.config.typos},
+                              "typos": self.config.typos, "prefer_real_browser": self.config.prefer_real_browser,
+                              "autonomous": self.config.autonomous,
+                              "auto_screenshots": self.config.auto_screenshots,
+                              "screenshot_px": self.config.effective_screenshot_px()},
             exclude=lambda: self._our_hwnds)
 
     API_MODEL_ALIASES = {"default": "claude-opus-5-5", "opus": "claude-opus-5-5",
@@ -156,8 +159,9 @@ class App:
         m = c.model.strip()
         effort = "low" if eagle else c.effective_effort()      # Eagle Eyes is always snappy
         return AgentSettings(model=self.API_MODEL_ALIASES.get(m, m), effort=effort,
-                             max_steps=c.max_steps, confirm_shell=c.confirm_shell, api_key=c.api_key,
-                             cli_model="" if m == "default" else m, work_style=c.work_style)
+                             max_steps=c.max_steps, confirm_shell=c.confirm_shell and not c.autonomous,
+                             api_key=c.api_key, cli_model="" if m == "default" else m,
+                             work_style=c.work_style, autonomous=c.autonomous)
 
     @property
     def agent(self):
@@ -183,7 +187,8 @@ class App:
         )
         c = self.config
         return Computer(hooks=hooks, max_long_edge=c.effective_screenshot_px(), monitor_index=c.monitor,
-                        confirm_risky_keys=c.confirm_risky_keys, human=c.human_typing,
+                        confirm_risky_keys=c.confirm_risky_keys and not c.autonomous,
+                        human=c.human_typing and not c.autonomous,
                         wpm=c.typing_wpm, typos=c.typos)
 
     def _start_hotkey(self):

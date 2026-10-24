@@ -575,31 +575,121 @@ def _browser_exe() -> str:
     return ""
 
 
-def launch_browser_with_debug(port: int, browser_path: str = "") -> bool:
-    """Relaunch the user's real browser with a DevTools debug port and their
-    normal session, so Teto can drive the tabs they already have open. Opens
-    minimized / without stealing focus. Uses an explicit user-data-dir pointed
-    at their default profile so remote debugging is permitted."""
+# Flags that keep a background (minimized / covered) browser running at full
+# speed instead of being throttled - Teto works in tabs the user isn't looking at.
+FAST_BACKGROUND_FLAGS = ["--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding",
+                         "--disable-background-timer-throttling", "--no-first-run", "--no-default-browser-check"]
+
+
+def browser_user_data(exe: str) -> str:
+    """The real 'User Data' folder for this Edge/Chrome executable."""
+    import os as _os
+
+    local = _os.environ.get("LOCALAPPDATA", "")
+    if not local:
+        return ""
+    if "edge" in (exe or "").lower():
+        return _os.path.join(local, r"Microsoft\Edge\User Data")
+    return _os.path.join(local, r"Google\Chrome\User Data")
+
+
+def launch_browser_with_debug(port: int, browser_path: str = "", user_data_dir: str = "",
+                              restore: bool = True) -> bool:
+    """Start Edge/Chrome with a DevTools debug port, minimized, without stealing
+    focus. user_data_dir defaults to the user's real profile folder (older
+    browsers allow debugging there; current ones need Teto's synced copy)."""
     import os as _os
     import subprocess
 
     exe = browser_path or _browser_exe()
     if not exe:
         return False
-    low = exe.lower()
-    if "edge" in low:
-        data = _os.path.join(_os.environ.get("LOCALAPPDATA", ""), r"Microsoft\Edge\User Data")
-    else:
-        data = _os.path.join(_os.environ.get("LOCALAPPDATA", ""), r"Google\Chrome\User Data")
-    args = [exe, f"--remote-debugging-port={int(port)}", "--remote-allow-origins=*", "--restore-last-session",
-            "--no-first-run", "--no-default-browser-check"]
-    if data and _os.path.isdir(data):
+    data = user_data_dir or browser_user_data(exe)
+    args = [exe, f"--remote-debugging-port={int(port)}", "--remote-allow-origins=*", "--start-minimized",
+            *FAST_BACKGROUND_FLAGS]
+    if restore:
+        args.append("--restore-last-session")
+    if data and (_os.path.isdir(data) or user_data_dir):
         args.append(f"--user-data-dir={data}")
     try:
         subprocess.Popen(args, stdin=subprocess.DEVNULL, creationflags=0x08000000)
         return True
     except Exception:
         return False
+
+
+def process_running(image: str) -> bool:
+    """True if a process with this exe name (e.g. 'msedge.exe') is running."""
+    if not IS_WINDOWS:
+        return False
+    import subprocess
+
+    try:
+        out = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {image}", "/NH"], capture_output=True,
+                             text=True, timeout=5, creationflags=0x08000000).stdout
+        return image.lower() in out.lower()
+    except Exception:
+        return False
+
+
+def close_browser(image: str, timeout: float = 4.0) -> bool:
+    """Close the browser politely (it saves the session), then make sure its
+    background helpers (e.g. Edge 'startup boost') are gone too."""
+    if not IS_WINDOWS:
+        return False
+    import subprocess
+
+    flags = 0x08000000
+    subprocess.run(["taskkill", "/IM", image], capture_output=True, creationflags=flags)
+    end = time.monotonic() + timeout
+    while time.monotonic() < end and process_running(image):
+        time.sleep(0.2)
+    if process_running(image):
+        subprocess.run(["taskkill", "/F", "/IM", image], capture_output=True, creationflags=flags)
+        time.sleep(0.5)
+    return not process_running(image)
+
+
+def reopen_browser(exe: str) -> None:
+    """Start the user's normal browser again with their tabs restored."""
+    import subprocess
+
+    try:
+        subprocess.Popen([exe, "--restore-last-session", "--start-minimized"], stdin=subprocess.DEVNULL,
+                         creationflags=0x08000000)
+    except Exception:
+        pass
+
+
+def read_shared(path: str) -> bytes | None:
+    """Read a file another process (the running browser) holds open, using full
+    share flags. Returns None if it's exclusively locked."""
+    if not IS_WINDOWS:
+        try:
+            with open(path, "rb") as f:
+                return f.read()
+        except OSError:
+            return None
+    import ctypes
+    from ctypes import wintypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateFileW.restype = wintypes.HANDLE
+    k32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+                                wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    GENERIC_READ, SHARE_ALL, OPEN_EXISTING = 0x80000000, 0x7, 3
+    h = k32.CreateFileW(path, GENERIC_READ, SHARE_ALL, None, OPEN_EXISTING, 0x80, None)
+    if not h or h == wintypes.HANDLE(-1).value:
+        return None
+    try:
+        chunks = []
+        buf = ctypes.create_string_buffer(1 << 20)
+        n = wintypes.DWORD()
+        while k32.ReadFile(h, buf, len(buf), ctypes.byref(n), None) and n.value:
+            chunks.append(buf.raw[:n.value])
+        return b"".join(chunks)
+    finally:
+        k32.CloseHandle(h)
 
 
 # ------------------------------------------------- hardware scan-code keyboard

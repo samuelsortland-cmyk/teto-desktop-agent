@@ -40,6 +40,9 @@ class Config:
     sounds: bool = False
     hotkey_stop: str = "<ctrl>+<alt>+q"
     work_style: str = "background"     # background: never borrow your mouse/keyboard without asking
+    autonomous: bool = True            # V3: full permission - act without asking (no confirm prompts)
+    prefer_real_browser: bool = True   # V3: work in the user's own signed-in Edge/Chrome by default
+    auto_screenshots: bool = True      # V3: every browser action comes back with a picture of the tab
     show_browser: bool = False         # show Teto's own browser window instead of running it invisibly
     browser_path: str = ""             # optional: a specific Chrome/Edge executable
     stand_on_windows: bool = True      # she can land on / ride your windows
@@ -93,6 +96,12 @@ class Config:
         self.update_branch = str(self.update_branch or "main").strip() or "main"
         if not isinstance(self.routines, list):
             self.routines = []
+        for name in ("autonomous", "prefer_real_browser", "confirm_shell", "confirm_risky_keys",
+                     "auto_screenshots", "show_browser", "human_typing", "typos", "auto_update"):
+            v = getattr(self, name)
+            if isinstance(v, str):
+                v = v.strip().lower() in ("1", "true", "yes", "on")
+            setattr(self, name, bool(v))
 
     # Speed profile -> (thinking effort, screenshot long-edge px). Smaller, lower-effort
     # requests come back from the model faster, which is what sets Teto's real pace.

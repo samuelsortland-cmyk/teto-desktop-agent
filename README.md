@@ -31,7 +31,13 @@ If something doesn't start, run `run_debug.bat` to see errors in a console. Logs
 
 ### She works in the background (you keep using your PC)
 
-**Teto can work in a tab you already have open.** If a task is about a site you're already signed in to or have open, Teto connects to your **own** running Edge/Chrome and works in your real tab, through the browser itself. She drives the page directly, so she never moves your mouse or steals focus - you can keep playing a game or doing other work while she gets it done. (If your browser wasn't started with background control, Teto reopens it once, restoring your tabs, to enable it.) Otherwise she uses her own hidden browser as before.
+**Teto 3.0 works in your own signed-in Edge.** Web tasks open in background tabs of *your* Edge, with your Google, Microsoft and school accounts already signed in. That Edge runs minimized and never touches your mouse or focus, so you can keep playing or working while she goes.
+
+How it works: current Edge won't let any program control its main profile folder, so Teto keeps a synced copy of your Edge profile in `%APPDATA%\TetoAgent\edge-you`. The copy includes your cookies/logins, saved passwords, bookmarks and settings, and it runs as a second, minimized Edge that she drives directly. The first time, Edge has your logins locked while it's open. With **Full permission** on, Teto closes Edge for a second, copies them and reopens it with your tabs; otherwise she'll ask you to close Edge once. After that she reconnects instantly. Anything you sign in to inside her Edge stays signed in.
+
+**Fast by design (3.0):** no fixed waits anywhere. Pages are used as soon as they're loaded, scrolling is detected as finished in ~30 ms, and new tabs are awaited, not slept for. Every browser action comes back with the page's elements *and* a picture of the tab, so she sees the result without spending an extra turn. The main limit on speed is how long Claude takes to think each step (about 1-3 s), so **Speed → Fast** and fewer, bigger steps matter most.
+
+**Full permission (on by default):** she acts without asking "should I?". There are no ALLOW/DENY prompts for shell commands or shortcuts. She'll still check with you before spending money, permanently deleting your files, or changing passwords/security settings. Turn it off in Settings → *Full permission* to get the old confirmations back.
 
 #### 👁 Eagle Eyes - let Teto take the screen
 
@@ -140,13 +146,11 @@ While she's working for you, she shows her state:
 
 She operates your *real* PC, so these guardrails are built in:
 
-- **She asks before anything irreversible or outward-facing**: sending, posting, purchases, deleting, submitting forms, changing account or security settings. Questions appear in the chat with quick-reply buttons.
-- **Shell commands need your approval** by default (ALLOW/DENY). You can change this with the checkbox or in Settings.
-- **Permanent-delete shortcuts** (Shift+Delete) need approval.
+- **Full permission is on by default (3.0)**: she just does the task. She still asks before purchases/payments, permanently deleting your files, or changing passwords/security settings. Turn *Full permission* off in Settings to bring back the stricter mode: she asks before anything irreversible or outward-facing, and shell commands and Shift+Delete need ALLOW/DENY.
 - **Prompt-injection defence**: text on screen, in web pages or in command output is treated as data, never as instructions. Anthropic's screenshot classifiers add a second layer.
 - **No secrets** are typed unless you supply them for the task. She won't try to bypass UAC, logins or CAPTCHAs.
 - **Instant stop** works from anywhere, and every task has a step limit (Settings → Max steps).
-- **Claude Code's own tools are switched off.** That includes its file editing and its own command runner. Claude can only act through Teto's tools, so every shell command still goes through your ALLOW/DENY prompt.
+- **Claude Code's own tools are switched off.** That includes its file editing and its own command runner. Claude can only act through Teto's tools, so every shell command goes through Teto's own permission rules.
 - Your Claude sign-in is stored by Claude Code in your user profile (`%USERPROFILE%\.claude`). **SIGN OUT** in Settings removes it. An API key, if you use one, is stored in `%APPDATA%\TetoAgent\config.json`.
 
 Even with these guardrails, for anything sensitive consider running her inside a VM or a separate Windows account.

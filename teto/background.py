@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import os
 import queue
 import random
@@ -90,6 +91,9 @@ def _which_browser() -> str:
 def _spawn(args: list[str]) -> None:
     import subprocess
 
+    if hasattr(os, "geteuid") and os.geteuid() == 0 and "--no-sandbox" not in args:
+        args = [*args, "--no-sandbox"]          # Chromium refuses to run as root otherwise (Linux CI)
+
     subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
 
 
@@ -101,6 +105,76 @@ def _image_block(img: Image.Image, max_long_edge: int = 1568) -> tuple[dict, flo
     img.convert("RGB").save(buf, format="JPEG", quality=80)
     return ({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
                                          "data": base64.b64encode(buf.getvalue()).decode()}}, s)
+
+
+# ------------------------------------------------- your-Edge profile sync
+# Current Edge/Chrome refuse background (DevTools) control of the default
+# profile folder. So Teto keeps a synced copy of the user's real profile - their
+# cookies/logins, saved passwords, settings and last session - and runs it as a
+# separate, minimized Edge she can drive. Same Windows account + same msedge.exe
+# means the encrypted cookies stay readable, so the user stays signed in.
+_MIRROR_FILES = ["Preferences", "Secure Preferences", "Cookies", "Cookies-journal", "Network/Cookies",
+                 "Network/Cookies-journal", "Login Data", "Login Data-journal", "Web Data", "Bookmarks",
+                 "History", "Favicons", "Extension Cookies"]
+_MIRROR_DIRS = ["Local Storage", "Session Storage", "Network"]   # not "Sessions": no tab restore storm
+
+
+def last_used_profile(user_data: str) -> str:
+    try:
+        with open(os.path.join(user_data, "Local State"), "r", encoding="utf-8") as f:
+            name = (json.load(f).get("profile") or {}).get("last_used") or "Default"
+    except Exception:
+        name = "Default"
+    return name if os.path.isdir(os.path.join(user_data, name)) else "Default"
+
+
+def mirror_profile(src_user_data: str, dest: str, read=None) -> dict:
+    """Copy the parts of a Chromium profile that carry the user's sign-ins into
+    dest (its own 'User Data' folder). Files the running browser has locked are
+    read with shared access when possible and otherwise skipped.
+    Returns {"profile", "copied", "skipped", "cookies"}."""
+    read = read or platform_win.read_shared
+    profile = last_used_profile(src_user_data)
+    copied, skipped = 0, []
+
+    def put(rel_src: str, rel_dest: str):
+        nonlocal copied
+        data = read(os.path.join(src_user_data, rel_src))
+        if data is None:
+            skipped.append(rel_src)
+            return False
+        out = os.path.join(dest, rel_dest)
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        with open(out, "wb") as f:
+            f.write(data)
+        copied += 1
+        return True
+
+    os.makedirs(dest, exist_ok=True)
+    if os.path.isfile(os.path.join(src_user_data, "Local State")):
+        put("Local State", "Local State")          # holds the key that decrypts cookies
+    for name in _MIRROR_FILES:
+        if os.path.isfile(os.path.join(src_user_data, profile, name)):
+            put(os.path.join(profile, name), os.path.join("Default", name))
+    for d in _MIRROR_DIRS:
+        root = os.path.join(src_user_data, profile, d)
+        for here, _dirs, files in os.walk(root):
+            for fn in files:
+                rel = os.path.relpath(os.path.join(here, fn), os.path.join(src_user_data, profile))
+                if fn.upper() == "LOCK":
+                    continue
+                put(os.path.join(profile, rel), os.path.join("Default", rel))
+    cookies = any(os.path.isfile(os.path.join(dest, "Default", c)) for c in ("Network/Cookies", "Cookies"))
+    try:   # the copy always opens as its own profile, not as "profile 3"
+        ls_path = os.path.join(dest, "Local State")
+        with open(ls_path, "r", encoding="utf-8") as f:
+            ls = json.load(f)
+        ls.setdefault("profile", {})["last_used"] = "Default"
+        with open(ls_path, "w", encoding="utf-8") as f:
+            json.dump(ls, f)
+    except Exception:
+        pass
+    return {"profile": profile, "copied": copied, "skipped": skipped, "cookies": cookies}
 
 
 # ----------------------------------------------------------- tool specs
@@ -116,14 +190,15 @@ BROWSER_SPECS: dict[str, tuple[str, dict]] = {
                                "they can keep using another app. Use this when the task is about a site they're "
                                "already signed in to, or they ask you to use their open tab. Teto may reopen the "
                                "browser once to enable background control.", _obj({}, [])),
-    "browser_open": ("Open a URL in a tab. By default this uses Teto's own background browser (separate tabs/logins "
-                     "from the user's). If you've connected with browser_use_my_browser, pass own_browser:false to "
-                     "open it in the user's real browser instead. Returns the tab id and the page's interactive "
-                     "elements.", _obj({"url": {"type": "string"},
+    "browser_open": ("Open a URL in a new background tab of the USER'S OWN signed-in Edge (their logins, Google "
+                     "account, etc.) - it runs minimized and never touches their mouse, keyboard or focus. Pass "
+                     "own_browser:true only for a throwaway task that must be kept apart from their accounts. "
+                     "Returns the tab id and the page's interactive elements.", _obj({"url": {"type": "string"},
                                         "new_tab": {"type": "boolean", "description": "Default true."},
                                         "own_browser": {"type": "boolean",
-                                                        "description": "Default true (Teto's browser)."}}, ["url"])),
-    "browser_tabs": ("List Teto's background browser tabs.", _obj({}, [])),
+                                                        "description": "Default false (the user's Edge)."}},
+                                       ["url"])),
+    "browser_tabs": ("List the open background tabs.", _obj({}, [])),
     "browser_snapshot": ("Get the current page's title, URL, a short text preview and its numbered interactive "
                          "elements [ref]. Use the refs with browser_click / browser_type / browser_select.",
                          _obj(dict(_TAB), [])),
@@ -252,7 +327,8 @@ class BackgroundBrowser:
     """Teto's own browser. Every method runs on the browser actor thread."""
 
     def __init__(self, profile_dir: str, headless: bool = True, browser_path: str = "",
-                 typing: Callable[[], tuple] = lambda: (True, 90, True), debug_port: int = 9222):
+                 typing: Callable[[], tuple] = lambda: (True, 90, True), debug_port: int = 9222,
+                 prefer_real: bool = False, may_close_browser: bool = False):
         self.profile_dir = profile_dir
         self.headless = headless
         self.browser_path = browser_path or os.environ.get("TETO_BROWSER_PATH", "")
@@ -266,6 +342,9 @@ class BackgroundBrowser:
         self.current: int | None = None
         self._next = 1
         self.shot_scale: dict[int, float] = {}
+        self.mirror_note = ""
+        self.prefer_real = prefer_real    # open sites in the user's own Edge by default
+        self.may_close_browser = may_close_browser   # full permission: may restart Edge once to copy logins
 
     # ---------------------------------------------------------- lifecycle
     def _ensure(self):
@@ -342,14 +421,14 @@ class BackgroundBrowser:
         if not self._cdp_reachable():
             if not launch_if_needed:
                 raise ActionError("Your browser isn't reachable for background control yet.")
-            launched = self._launch_real_with_debug()
-            for _ in range(30):
-                if self._cdp_reachable():
-                    break
-                time.sleep(0.5)
-            if not self._cdp_reachable():
-                raise ActionError("I couldn't connect to your Edge/Chrome. Make sure Edge is installed, or use my "
-                                  "own browser instead (I'll open the site in a background tab).")
+            launched = False if IS_WINDOWS else self._launch_real_with_debug()
+            if not (launched and self._wait_cdp(8.0)):
+                # Current Edge ignores the debug port on its default folder (or Edge
+                # was already open): run Teto's synced copy of the user's profile.
+                self.mirror_note = self._launch_mirror()
+                launched = True
+                if not self._wait_cdp(15.0):
+                    raise ActionError("I couldn't connect to your Edge/Chrome. Make sure Edge is installed.")
         if self.pw is None:
             self.pw = sync_playwright().start()
         try:
@@ -361,8 +440,56 @@ class BackgroundBrowser:
         self.ctx.on("page", self._register)
         for p in list(self.ctx.pages):
             self._register(p)
-        where = " (I reopened it with background control on)" if launched else ""
-        return f"Connected to your browser{where}. Your open tabs:\n" + self.list_tabs()
+        where = " (opened in the background with your profile)" if launched else ""
+        return f"Connected to your Edge{where}.{self.mirror_note} Open tabs:\n" + self.list_tabs()
+
+    def _wait_cdp(self, seconds: float) -> bool:
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            if self._cdp_reachable():
+                return True
+            time.sleep(0.15)
+        return self._cdp_reachable()
+
+    def _launch_mirror(self) -> str:
+        exe = self.browser_path or (platform_win._browser_exe() if IS_WINDOWS else _which_browser())
+        if not exe:
+            raise ActionError("I couldn't find Microsoft Edge or Chrome on this PC.")
+        dest = self.mirror_dir()
+        src = platform_win.browser_user_data(exe) if IS_WINDOWS else ""
+        note = ""
+        if src and os.path.isdir(src):
+            image = os.path.basename(exe)
+            have = any(os.path.isfile(os.path.join(dest, "Default", c)) for c in ("Network/Cookies", "Cookies"))
+            running = platform_win.process_running(image)
+            reopen = False
+            if running and not have:
+                # First time: Edge locks its cookie file while open. With full permission
+                # Teto closes it for a moment (tabs are saved), copies the logins, and
+                # reopens it; otherwise she asks the user to.
+                if self.may_close_browser and platform_win.close_browser(image):
+                    running, reopen = False, True
+            try:
+                if not running or not have:
+                    info = mirror_profile(src, dest)
+                    if not info["cookies"]:
+                        note = (" (Your Edge kept its sign-in data locked; close Edge once and I'll copy your "
+                                "logins next time.)")
+                    elif reopen:
+                        note = " (I closed and reopened your Edge once to copy your logins - your tabs are back.)"
+            except Exception as e:
+                note = f" (Couldn't sync your logins: {e}.)"
+            if reopen:
+                platform_win.reopen_browser(exe)
+        if IS_WINDOWS:
+            platform_win.launch_browser_with_debug(self.debug_port, exe, user_data_dir=dest, restore=False)
+        else:
+            _spawn([exe, f"--remote-debugging-port={self.debug_port}", "--remote-allow-origins=*",
+                    f"--user-data-dir={dest}", *platform_win.FAST_BACKGROUND_FLAGS])
+        return note
+
+    def mirror_dir(self) -> str:
+        return os.path.join(os.path.dirname(self.profile_dir) or self.profile_dir, "edge-you")
 
     def _launch_real_with_debug(self) -> bool:
         """Relaunch the user's Edge/Chrome with the debug port and their tabs."""
@@ -371,7 +498,7 @@ class BackgroundBrowser:
             if not exe:
                 return False
             _spawn([exe, f"--remote-debugging-port={self.debug_port}", "--remote-allow-origins=*",
-                    f"--user-data-dir={os.path.join(self.profile_dir, 'attach')}", "--no-first-run"])
+                    f"--user-data-dir={os.path.join(self.profile_dir, 'attach')}", *platform_win.FAST_BACKGROUND_FLAGS])
             return True
         return platform_win.launch_browser_with_debug(self.debug_port, self.browser_path)
 
@@ -420,25 +547,51 @@ class BackgroundBrowser:
         self.current = tab
         return tab, self.tabs[tab]
 
-    def _settle(self, page, wait: int = 120):
+    def _settle(self, page, wait: int = 0):
         """Let the page catch up. Kept short so background work stays snappy;
         navigations get a longer load wait, in-page clicks only a brief tick."""
         try:
             page.wait_for_load_state("domcontentloaded", timeout=6000)
         except Exception:
             pass
-        try:
-            page.wait_for_timeout(wait)
-        except Exception:
-            pass
+        if wait:
+            try:
+                page.wait_for_timeout(wait)
+            except Exception:
+                pass
         if self.ctx is not None:
             for p in list(self.ctx.pages):       # pick up tabs opened by the page
                 self._register(p)
 
+    _SCROLL_STILL = """() => new Promise(done => {
+        let last = -1, still = 0, t0 = Date.now();
+        const tick = () => {
+            const y = window.scrollY + window.scrollX * 1e6;
+            still = (y === last) ? still + 1 : 0; last = y;
+            if (still >= 2 || Date.now() - t0 > 400) return done(true);
+            setTimeout(tick, 16);
+        };
+        tick();
+    })"""
+
+    def _scroll_done(self, page):
+        """Return as soon as (smooth) scrolling has stopped - usually ~30 ms -
+        instead of sleeping a fixed time."""
+        try:
+            page.evaluate(self._SCROLL_STILL)
+        except Exception:
+            pass
+
     # -------------------------------------------------------------- tools
-    def open(self, url: str, new_tab: bool = True, own_browser: bool = True) -> str:
-        if not own_browser and not self.attached:
-            self.attach()                       # open in the user's real browser
+    def open(self, url: str, new_tab: bool = True, own_browser: bool | None = None) -> str:
+        if own_browser is None:
+            own_browser = not self.prefer_real
+        fallback = ""
+        if not own_browser and not self.attached and self.ctx is None:
+            try:
+                self.attach()                   # work in the user's own signed-in Edge
+            except ActionError as e:
+                fallback = f"\n(Couldn't use your Edge - {e} - so I used my own background browser.)"
         self._ensure()
         url = url.strip()
         if "://" not in url and not url.startswith(("about:", "data:", "file:")):
@@ -455,7 +608,9 @@ class BackgroundBrowser:
         except Exception as e:
             raise ActionError(f"Couldn't load {url}: {str(e).splitlines()[0]}")
         self._settle(page)
-        return f"Opened in background tab {tid}.\n" + self.snapshot(tid) + self._login_note(page)
+        where = "your Edge" if self.attached else "my background browser"
+        return (f"Opened in {where}, background tab {tid}.{fallback}\n" + self.snapshot(tid)
+                + self._login_note(page))
 
     _LOGIN_HOSTS = ("accounts.google.com", "login.microsoftonline.com", "login.live.com", "login.yahoo.com",
                     "appleid.apple.com", "signin.aws", "auth0.com")
@@ -533,6 +688,19 @@ class BackgroundBrowser:
         w, h = int(img.width * s), int(img.height * s)
         return [block, {"type": "text", "text": f"Tab {tid} screenshot, {w}x{h}: {page.title()}"}]
 
+    def glance(self, tab: int | None = None, max_long_edge: int = 1024) -> dict | None:
+        """A quick, small picture of the tab for the model to see after every
+        action (no extra round trip). Returns an image block or None."""
+        try:
+            tid, page = self._page(tab)
+            png = page.screenshot(type="jpeg", quality=60, timeout=2500, animations="allow")
+        except Exception:
+            return None
+        img = Image.open(io.BytesIO(png))
+        block, s = _image_block(img, max_long_edge)
+        self.shot_scale[tid] = s
+        return block
+
     def _ref(self, page, ref: int):
         loc = page.locator(f'[data-teto-ref="{int(ref)}"]')
         if loc.count() == 0:
@@ -544,8 +712,21 @@ class BackgroundBrowser:
         el = self._ref(page, ref)
         before = page.url
         try:
+            popup = el.evaluate("e => { const a = e.closest('a,form'); return !!a && a.target === '_blank'; }")
+        except Exception:
+            popup = False
+        try:
             el.scroll_into_view_if_needed(timeout=5000)
-            el.click(timeout=10000)
+            if popup and self.ctx is not None:      # wait for the new tab instead of a fixed sleep
+                try:
+                    with self.ctx.expect_page(timeout=8000) as info:
+                        el.click(timeout=10000)
+                    self._register(info.value)
+                except Exception as e:
+                    if "Timeout" not in type(e).__name__:
+                        raise
+            else:
+                el.click(timeout=10000)
         except Exception as e:
             raise ActionError(f"Couldn't click [{ref}]: {str(e).splitlines()[0]}")
         self._settle(page)
@@ -600,6 +781,7 @@ class BackgroundBrowser:
         tid, page = self._page(tab)
         page.keyboard.press(to_playwright_combo(keys))
         self._settle(page)
+        self._scroll_done(page)
         return f"Pressed {keys} in tab {tid}."
 
     def write(self, text: str, tab: int | None = None) -> str:
@@ -608,17 +790,13 @@ class BackgroundBrowser:
         insertion and only react to actual keydown/keypress events."""
         tid, page = self._page(tab)
         page.keyboard.type(text.replace("\r\n", "\n"), delay=0)   # \n becomes a real Enter
-        try:
-            page.wait_for_timeout(80)
-        except Exception:
-            pass
         return f"Wrote {len(text)} characters into the focused editor in tab {tid}."
 
     def scroll(self, direction: str, amount: float = 1.0, tab: int | None = None) -> str:
         tid, page = self._page(tab)
         dy = (1 if direction == "down" else -1) * max(0.1, min(float(amount or 1), 20)) * 700
         page.mouse.wheel(0, dy)
-        page.wait_for_timeout(400)
+        self._scroll_done(page)
         return f"Scrolled {direction} in tab {tid}.\n\n" + self.snapshot(tid)
 
     def navigate(self, action: str, tab: int | None = None) -> str:
@@ -845,6 +1023,8 @@ class BackgroundTools:
                 s = self.settings()
                 self._browser = BackgroundBrowser(self.profile_dir, headless=not s.get("show_browser", False),
                                                   browser_path=s.get("browser_path", ""),
+                                                  prefer_real=bool(s.get("prefer_real_browser", False)),
+                                                  may_close_browser=bool(s.get("autonomous", False)),
                                                   typing=lambda: (self.settings().get("human_typing", True),
                                                                   self.settings().get("typing_wpm", 90),
                                                                   self.settings().get("typos", True)))
@@ -868,7 +1048,7 @@ class BackgroundTools:
             calls = {
                 "browser_use_my_browser": b.attach,
                 "browser_open": lambda: b.open(str(a.get("url", "")), a.get("new_tab", True) is not False,
-                                               a.get("own_browser", True) is not False),
+                                               (None if a.get("own_browser") is None else bool(a.get("own_browser")))),
                 "browser_tabs": b.list_tabs,
                 "browser_snapshot": lambda: b.snapshot(tab),
                 "browser_read": lambda: b.read(tab),
@@ -903,9 +1083,20 @@ class BackgroundTools:
         if name not in calls:
             raise ActionError(f"Unknown background tool {name}")
         try:
-            return act.call(calls[name], should_stop=should_stop)
+            out = act.call(calls[name], should_stop=should_stop)
         except KeyError as e:
             raise ActionError(f"Missing argument {e}")
+        if (name in self.SEE_AFTER and isinstance(out, str)
+                and self.settings().get("auto_screenshots", False)):
+            px = int(self.settings().get("screenshot_px", 1024) or 1024)
+            img = act.call(lambda: b.glance(None, px), should_stop=should_stop)
+            if img is not None:
+                return [{"type": "text", "text": out}, img]
+        return out
+
+    # browser actions that come back with a fresh picture of the tab
+    SEE_AFTER = {"browser_open", "browser_click", "browser_click_xy", "browser_type", "browser_press",
+                 "browser_write", "browser_scroll", "browser_navigate", "browser_select"}
 
     def shutdown(self):
         with self._lock:
@@ -928,35 +1119,26 @@ def work_style_prompt(style: str, has_background: bool) -> str:
                "window_type to operate them, and window_screenshot to see a window even when it is behind others. "
                "Launch apps with open_target (they open minimised, without stealing focus).\n") if IS_WINDOWS else ""
     if style == "background":
-        return ("Working alongside the user (IMPORTANT): the user keeps using their PC while you work, so do NOT take "
-                "over their mouse and keyboard. Work in the background:\n"
-                "- Web tasks: use your own background browser (browser_open, browser_snapshot, browser_click, "
-                "browser_type, browser_read...). It is invisible to the user and has its own tabs and logins. If a "
-                "site needs the user to log in, ask them and offer browser_show so they can log in once.\n"
-                "- If the task is about a site the user already has open or is signed in to (their email, a page "
-                "they mention having open, etc.), use browser_use_my_browser to connect to their OWN running "
-                "Edge/Chrome and work in their real tab. This drives the page directly without touching their "
-                "mouse or focus, so they can keep doing something else (like playing a game) meanwhile.\n"
-                "- Accounts & logins: your browser keeps its own logins and remembers them between sessions. If a "
-                "page returns a [SIGN-IN NEEDED] note, your browser window has opened - tell the user to sign in "
-                "there once, wait for them, then re-snapshot and carry on. You only need this the first time per "
-                "account.\n"
-                "- Google Docs/Sheets/Slides & Gmail: to CREATE a new Google Doc open "
+        return ("Working alongside the user (IMPORTANT): the user keeps using their PC while you work, so work in "
+                "the background and never wait for them:\n"
+                "- Web tasks happen in the USER'S OWN signed-in Microsoft Edge: browser_open opens a new background "
+                "tab there (minimized, no focus stealing - they can keep gaming). Their Google/Microsoft/school "
+                "accounts are already signed in, so just go. Use browser_use_my_browser to see their open tabs and "
+                "work in one of them.\n"
+                "- After every browser action you get the page's numbered elements AND a picture of the tab. Look "
+                "at both and keep going - no separate screenshot call needed.\n"
+                "- If a page still returns a [SIGN-IN NEEDED] note, tell the user in one line and keep doing any "
+                "other part of the task meanwhile; re-snapshot after.\n"
+                "- Google Docs/Sheets/Slides: to CREATE a new Google Doc open "
                 "'https://docs.google.com/document/create' (Sheets: '.../spreadsheets/create', Slides: "
-                "'.../presentation/create'); handle any [SIGN-IN NEEDED] first. A Google Doc is a canvas editor, so "
-                "to write in it: click into the document body, then use browser_write to type the content (do not "
-                "expect to read the document's text back from the page). The new doc autosaves; give the user its "
-                "URL when done.\n"
-                "- Seeing the page: browser_snapshot and browser_read give you the page as text (fast) and after "
-                "every action you already get a fresh snapshot - work from that. Only use browser_screenshot when "
-                "you truly need to SEE layout/graphics; it is slower.\n"
+                "'.../presentation/create'). A Google Doc is a canvas editor: click into the body, then use "
+                "browser_write to type the content. It autosaves; give the user the URL when done.\n"
                 + desktop +
                 "- Files, settings and information: run_shell.\n"
-                "- The screenshot/mouse/keyboard tools take over the user's real input and will pause to ask the "
-                "user first - avoid them in this mode; they may stall if the user is busy. Do the job with the "
-                "browser and window tools above and run_shell instead.\n"
-                "Work efficiently: act, then check; don't insert waits between steps. The user may be busy "
-                "(e.g. gaming), so just get it done quietly in the background.")
+                "- The real mouse/keyboard/screenshot tools act on the user's screen: do NOT take over their mouse and "
+                "keyboard unless a job truly can't be done in a background tab or window.\n"
+                "Pace: go, go, go. Chain actions back to back with no waits and no check-ins; you have full "
+                "permission, so never ask \"should I?\" - just do it and report when done.")
     return ("Background tools: besides the real mouse and keyboard, you have your own background browser "
             "(browser_*)" + (" and background desktop control (window_*)" if IS_WINDOWS else "") +
             ". Prefer them when they are more reliable, e.g. browser_snapshot + browser_click for web pages.")
