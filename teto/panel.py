@@ -129,6 +129,12 @@ class Panel:
         self.update_lbl.pack(side="left", fill="x", expand=True)
         pixel_button(self.update_bar, "UPDATE", self.app.install_update, color=RED_D).pack(side="right")
 
+        self.link_bar = tk.Frame(w, bg="#a8f0d8", padx=8, pady=6)
+        self.link_bar._font_b = self.font_b
+        tk.Label(self.link_bar, text="Let me work in tabs you're NOT on\n(one-time, 30-sec setup)", bg="#a8f0d8",
+                 fg="#1a0e15", font=self.font_b, anchor="w", justify="left").pack(side="left", fill="x", expand=True)
+        pixel_button(self.link_bar, "CONNECT EDGE", self.app.connect_edge_ui, color=RED_D).pack(side="right")
+
         # log
         body = self.body = tk.Frame(w, bg=BG, padx=6, pady=6)
         self.log_txt = tk.Text(body, height=10, bg=BG, fg=TEXT, font=self.font, wrap="word", bd=0,
@@ -274,6 +280,13 @@ class Panel:
         self.update_lbl.config(text=text)
         if not self.update_bar.winfo_ismapped():
             self.update_bar.pack(fill="x", after=self._signin_anchor)
+
+    def set_link(self, show: bool):
+        """Show the 'connect Teto Link' bar until the extension is connected."""
+        if not show:
+            self.link_bar.pack_forget()
+        elif not self.link_bar.winfo_ismapped():
+            self.link_bar.pack(fill="x", after=self._signin_anchor)
 
     def set_signin(self, state: str):
         """hidden | signed_out | waiting"""

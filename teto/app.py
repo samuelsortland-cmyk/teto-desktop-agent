@@ -233,9 +233,26 @@ class App:
     def _watch_link(self):
         now = self.link_connected()
         if now and not self._link_was:
-            self.pet.say("Teto Link connected! I can work right in your tabs now ♪", 5)
+            self.pet.say("Teto Link connected! I can work in your tabs in the background now ♪", 5)
         self._link_was = now
+        if sys.platform == "win32":
+            try:
+                self.panel.set_link(not now)
+            except Exception:
+                pass
+            self._link_checks = getattr(self, "_link_checks", 0) + 1
+            if not now and self._link_checks == 6:            # ~30 s after start, once
+                self.pet.say("Want me to work in tabs you're not on? Click me to connect Teto Link (30 sec) ♪",
+                             10, on_click=self.connect_edge_ui)
         self.root.after(5000, self._watch_link)
+
+    def connect_edge_ui(self):
+        from tkinter import messagebox
+        text = self.connect_edge()
+        try:
+            messagebox.showinfo("Connect my Edge", text)
+        except Exception:
+            pass
 
     def connect_edge(self) -> str:
         """One-time setup: show the user where the extension is and open Edge's

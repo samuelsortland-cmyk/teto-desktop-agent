@@ -879,6 +879,7 @@ class BackgroundDesktop:
         self.shot_scale: dict[int, float] = {}
         self.web_windows: set[int] = set()     # the user's browser windows we've read as web pages
         self.last_hwnd: int | None = None
+        self.switched_note = ""
 
     @staticmethod
     def init_thread():
@@ -1052,6 +1053,15 @@ class BackgroundDesktop:
             if i is None:
                 continue
             if not self._selected(tabs[i]):
+                if platform_win.foreground_window() == hwnd:
+                    # They're using this Edge window: switching tabs would yank their view.
+                    raise ActionError(
+                        f"'{names[i][0]}' isn't the tab showing, and the user is using that Edge window right now. "
+                        "Without Teto Link I can only work in the tab that's showing, so I won't switch their tab. "
+                        "Tell the user: connect Teto Link (Settings > Connect my Edge, 30 seconds) and I can work "
+                        "in that tab in the background - or they can switch to it / move it to its own window.")
+                self.switched_note = (" (I switched that Edge window to this tab - it's behind the app the user "
+                                      "is using, so it doesn't disturb them)")
                 before = platform_win.window_title(hwnd)
                 pat = tabs[i].GetPattern(auto.PatternId.SelectionItemPattern)
                 if pat is None or not pat.Select():
@@ -1152,9 +1162,12 @@ class BackgroundDesktop:
         return "\n\n".join(out)
 
     def screen_tab(self, switch_to: str = "") -> str:
+        self.switched_note = ""
         hwnd, root = self._window(switch_to)
         self.last_hwnd = hwnd
-        return self.tab_state(hwnd, root)
+        return (self.tab_state(hwnd, root) + self.switched_note +
+                "\n\n(Using Windows accessibility because Teto Link isn't connected: only the tab showing in an "
+                "Edge window can be worked in.)")
 
     def list_tabs_text(self) -> str:
         import uiautomation as auto
@@ -1437,7 +1450,10 @@ def work_style_prompt(style: str, has_background: bool) -> str:
                   "my_tab_read (tab: part of its title, or empty for the one they're looking at), then "
                   "my_tab_click / my_tab_type / my_tab_select / my_tab_key / my_tab_scroll. Every action returns "
                   "the page's new state - read it and keep going (answer, Next, answer...). NEVER open a new tab, "
-                  "a copy of their tab, or a search unless the user asked for that; it is blocked anyway.\n"
+                  "a copy of their tab, or a search unless the user asked for that; it is blocked anyway. Do NOT use the "
+                  "real screenshot/mouse/keyboard for their tabs either - that would force them onto the tab; "
+                  "the my_tab tools work while they're elsewhere. If a my_tab tool says Teto Link is needed, "
+                  "tell the user in one line and stop.\n"
                 "- After every browser action you get the page's numbered elements AND a picture of the tab. Look "
                 "at both and keep going - no separate screenshot call needed.\n"
                 "- If a page still returns a [SIGN-IN NEEDED] note, tell the user in one line and keep doing any "

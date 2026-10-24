@@ -618,6 +618,17 @@ def launch_browser_with_debug(port: int, browser_path: str = "", user_data_dir: 
         return False
 
 
+def foreground_window() -> int:
+    """The window the user is using right now (0 if unknown)."""
+    if not IS_WINDOWS:
+        return 0
+    try:
+        h = int(user32.GetForegroundWindow() or 0)
+        return int(user32.GetAncestor(wintypes.HWND(h), 2) or h) if h else 0     # GA_ROOT
+    except Exception:
+        return 0
+
+
 def wake_chromium_accessibility(hwnd: int) -> None:
     """Ask Chromium (Edge/Chrome) to build its page accessibility tree: send
     WM_GETOBJECT to its Chrome_RenderWidgetHostHWND child windows, which is what

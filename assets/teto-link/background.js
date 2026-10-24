@@ -224,6 +224,8 @@ const COMMANDS = {
 
   async read({tabId}) {
     const tab = await chrome.tabs.get(tabId);
+    if (tab.discarded) throw new Error("that tab is asleep (Edge 'sleeping tabs') - clicking it once wakes it; " +
+                                       "you can stop Edge from putting it to sleep in edge://settings/system");
     const snap = await inPage(tabId, pageSnapshot);
     return {...snap, active: tab.active, windowId: tab.windowId};
   },

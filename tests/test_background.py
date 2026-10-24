@@ -552,3 +552,15 @@ def test_url_and_tab_helpers():
     tabs = [("Inbox - Gmail", True), ("Essay - Google Docs", False)]
     assert background.pick_tab(tabs, "2") == 1 and background.pick_tab(tabs, "gmail") == 0
     assert background.pick_tab(tabs, "zzz") is None
+
+
+def test_without_link_never_switches_the_tab_the_user_is_looking_at(fake_edge, monkeypatch):
+    tools = BackgroundTools("/nonexistent", settings=lambda: {"auto_screenshots": False})
+    monkeypatch.setattr(background.platform_win, "foreground_window", lambda: 42)    # user is in Edge
+    with pytest.raises(ActionError, match="won't switch their tab"):
+        tools.run("my_tab_read", {"tab": "roblox"})
+    assert fake_edge["selected"] == 0
+    monkeypatch.setattr(background.platform_win, "foreground_window", lambda: 11)    # user is in another app
+    out = tools.run("my_tab_read", {"tab": "roblox"})
+    assert fake_edge["selected"] == 1 and "doesn't disturb them" in out and "Teto Link isn't connected" in out
+    tools.shutdown()
