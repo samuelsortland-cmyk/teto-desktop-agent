@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Teto</title>
+<link rel="stylesheet" href="panel.css">
+</head>
+<body>
+<div class="scallop"></div>
+<header>
+  <img class="face" src="sprites/face.png" alt="">
+  <div class="names">
+    <div class="name">Teto</div>
+    <div id="status" class="status ok">● Connecting...</div>
+  </div>
+  <div class="icons">
+    <button id="stop" class="icon red hidden" title="Stop (Esc)">■</button>
+    <button id="eagleBtn" class="icon" title="Eagle Eyes: let Teto take this tab">◉</button>
+    <button id="newChat" class="icon" title="New chat">↻</button>
+    <button id="gear" class="icon" title="Settings">⚙</button>
+  </div>
+</header>
+<div class="line"></div>
+
+<div id="signin" class="banner pink hidden">
+  <span>Sign in with your Claude account (Pro or Max) to wake my brain ♪</span>
+  <button id="signinBtn" class="pill">Sign in</button>
+</div>
+<div id="eagleBar" class="banner mint hidden">
+  <span><b>◉ Eagle Eyes</b> - tell me what to do in the tab you're looking at (great for browser games).</span>
+  <button id="eagleOff" class="pill outline">Off</button>
+</div>
+
+<main id="chatView">
+  <div id="log"></div>
+</main>
+
+<section id="setupView" class="hidden">
+  <h2>Let's wake Teto up</h2>
+  <p>Teto's brain runs in your Chromebook's Linux side. It isn't answering right now.</p>
+  <ol>
+    <li>Open the <b>Teto</b> app from your launcher (search "Teto"), or open the <b>Terminal</b> app once.</li>
+    <li>First time? In Terminal, run:<br><code id="installCmd">curl -fsSL https://raw.githubusercontent.com/samuelsortland-cmyk/teto-desktop-agent/main/chromebook/install.sh | bash</code></li>
+  </ol>
+  <p class="muted">This page reconnects by itself as soon as Teto is running.</p>
+</section>
+
+<section id="settingsView" class="hidden">
+  <h2>Settings</h2>
+  <div class="card">
+    <label class="row"><span>Full permission<small>Just do it - no "should I?" questions</small></span><input type="checkbox" id="s_autonomous"><i class="sw"></i></label>
+    <label class="row"><span>Teto walks on my web pages</span><input type="checkbox" id="s_pet"><i class="sw"></i></label>
+    <label class="row"><span>See the page after every action</span><input type="checkbox" id="s_auto_screenshots"><i class="sw"></i></label>
+    <label class="row"><span>Update by herself</span><input type="checkbox" id="s_auto_update"><i class="sw"></i></label>
+  </div>
+  <div class="card">
+    <label class="row"><span>Speed</span>
+      <select id="s_speed"><option value="fast">Fast (recommended)</option><option value="balanced">Balanced</option><option value="max">Max</option></select>
+    </label>
+    <label class="row"><span>Model</span>
+      <select id="s_model"><option value="default">Default</option><option value="opus">Opus</option><option value="sonnet">Sonnet</option><option value="haiku">Haiku</option></select>
+    </label>
+  </div>
+  <div class="buttons">
+    <button id="checkUpdate" class="pill outline">Check for updates</button>
+    <button id="signout" class="pill outline">Sign out</button>
+    <button id="closeSettings" class="pill">Done</button>
+  </div>
+  <p id="version" class="muted"></p>
+</section>
+
+<footer>
+  <div class="field">
+    <textarea id="input" rows="1" placeholder="Message Teto..."></textarea>
+    <button id="send" class="send" title="Send">
+      <svg viewBox="0 0 24 24" width="16" height="16"><path d="M3 4l18 8-18 8 3-8z" fill="white"/></svg>
+    </button>
+  </div>
+  <div class="hint">Enter to send · Shift+Enter new line · Esc stops</div>
+</footer>
+<script src="panel.js"></script>
+</body>
+</html>

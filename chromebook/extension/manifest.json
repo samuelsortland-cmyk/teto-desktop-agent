@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Teto for Chromebook",
+  "version": "1.0.0",
+  "description": "Teto, your pixel-art buddy and agent: chats in the side panel, walks on your pages, and works in your tabs.",
+  "permissions": ["tabs", "scripting", "debugger", "alarms", "storage", "sidePanel"],
+  "host_permissions": ["<all_urls>", "http://localhost/*", "http://127.0.0.1/*", "http://penguin.linux.test/*"],
+  "background": {"service_worker": "background.js"},
+  "side_panel": {"default_path": "panel.html"},
+  "action": {"default_title": "Chat with Teto", "default_icon": {"16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png"}},
+  "icons": {"16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png"},
+  "content_scripts": [{"matches": ["http://*/*", "https://*/*"], "js": ["pet.js"], "run_at": "document_idle"}],
+  "web_accessible_resources": [{"resources": ["sprites/teto.png", "sprites/frames.json"], "matches": ["<all_urls>"]}]
+}
